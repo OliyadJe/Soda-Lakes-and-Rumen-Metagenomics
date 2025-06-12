@@ -172,3 +172,79 @@ combined_horizontal <- plot_A + plot_B_dot + plot_C +
   plot_annotation(tag_levels = "A")
 
 ggsave("Combined_Functional_Panels.png", combined_horizontal, width = 18, height = 6, dpi = 600)
+
+# Step 1: Prepare GH data and clean genus
+gh_data <- cleaned_merged_data %>%
+  filter(CAZy_Class == "GH", !is.na(Gene_Family), !is.na(`Sample Type`)) %>%
+  mutate(Genus = ifelse(is.na(Genus) | Genus == "", "Unclassified", Genus))
+
+# Step 2: Get top 20 GH families overall
+top20_gh <- gh_data %>%
+  count(Gene_Family, sort = TRUE) %>%
+  top_n(20, n) %>%
+  pull(Gene_Family)
+
+# Step 3: Filter to top 20 GH families
+gh_filtered <- gh_data %>%
+  filter(Gene_Family %in% top20_gh)
+
+# Step 4: Top 10 genera per GH family × Sample Type
+top_genus_per_group <- gh_filtered %>%
+  count(Gene_Family, `Sample Type`, Genus) %>%
+  group_by(Gene_Family, `Sample Type`) %>%
+  slice_max(n, n = 10, with_ties = FALSE) %>%
+  ungroup()
+
+top_genus_per_group <- gh_filtered %>%
+  count(Gene_Family, `Sample Type`, Genus) %>%
+  group_by(Gene_Family, `Sample Type`) %>%
+  slice_max(n, n = 5, with_ties = FALSE) %>%
+  ungroup()
+
+# Step 5: Filter main data accordingly
+plot_data <- gh_filtered %>%
+  semi_join(top_genus_per_group, by = c("Gene_Family", "Sample Type", "Genus")) %>%
+  count(`Sample Type`, Gene_Family, Genus)
+
+# Step 6: Define dynamic color palette (up to 60 colors)
+n_colors <- length(unique(plot_data$Genus))
+color_palette <- colorRampPalette(brewer.pal(12, "Paired"))(n_colors)
+
+# Step 7: Plot
+ggplot(plot_data, aes(x = fct_reorder(Gene_Family, n), y = n, fill = Genus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ `Sample Type`) +
+  coord_flip() +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    title = "Top 20 GH Families (Top 10 Genera per Sample Type)",
+    x = "GH Family",
+    y = "Count",
+    fill = "Genus"
+  ) +
+  theme_minimal() +
+  theme(strip.text = element_text(face = "bold"))
+
+# Step 5: Calculate relative abundance
+plot_data <- gh_filtered %>%
+  semi_join(top_genus_per_group, by = c("Gene_Family", "Sample Type", "Genus")) %>%
+  count(`Sample Type`, Gene_Family, Genus) %>%
+  group_by(`Sample Type`, Gene_Family) %>%
+  mutate(Relative_Abundance = n / sum(n)) %>%
+  ungroup()
+
+ggplot(plot_data, aes(x = fct_reorder(Gene_Family, Relative_Abundance), y = Relative_Abundance, fill = Genus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ `Sample Type`) +
+  coord_flip() +
+  scale_fill_manual(values = color_palette) +
+  labs(
+    title = "",
+    x = "GH Family",
+    y = "Relative Abundance",
+    fill = "Genus"
+  ) +
+  theme_minimal() +
+  theme(strip.text = element_text(face = "bold"))
+
+ggsave("GH_Genus_RelAbundance_by_SampleType3.png", width = 12, height = 8, dpi = 300)
