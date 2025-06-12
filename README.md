@@ -3,7 +3,7 @@
 
 ---
 
-## 📘 Overview
+## Overview
 
 This project presents a comparative metagenomic analysis of microbial communities and carbohydrate-active enzyme (CAZyme) repertoires in two contrasting environments: Ethiopian soda lakes and the ruminant gut (rumen). 
 
@@ -13,7 +13,7 @@ This repository contains all analysis scripts, from quality control and assembly
 
 ---
 
-## 🧪 Analysis Environment and Workflow
+## Analysis Environment and Workflow
 
 Analyses were performed primarily on Swedish national high-performance computing clusters:
 
@@ -26,5 +26,5 @@ Scripts are modular, organized by analysis stage, and executable on any Linux-ba
 
 ---
 
-## 📁 Repository Structure
+
 
