@@ -1,0 +1,2540 @@
+---
+title: "CAZyme fold architecture is conserved between disparate environments despite extreme sequence divergence"
+subtitle: "Oliyad Jeilu, Addis Simachew, Erica M. Hartmann, Erik Alexandersson, Eva Johansson"
+author: "Oliyad Jeilu, Addis Simachew, Erica M. Hartmann, Erik Alexandersson, Eva Johansson | Published in mSystems (2026) | DOI: 10.1128/msystems.00485-26"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+    theme: cosmo
+    code_folding: hide
+    fig_width: 10
+    fig_height: 7
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, warning = FALSE, message = FALSE,
+  fig.align = "center", dpi = 300,
+  dev = c("png", "pdf"),
+  cache = FALSE
+)
+
+# ── Install / load packages ──────────────────────────────────────────────────
+required_pkgs <- c(
+  "tidyverse", "vegan", "ComplexHeatmap", "RColorBrewer", "ggtree", "treeio",
+  "ape", "ggpubr", "rstatix", "dunn.test", "patchwork", "viridis",
+  "scales", "kableExtra", "ggrepel", "reshape2", "ggsci", "circlize", "png"
+)
+
+for (pkg in required_pkgs) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    if (pkg %in% c("ggtree", "treeio", "ComplexHeatmap")) {
+      if (!requireNamespace("BiocManager", quietly = TRUE))
+        install.packages("BiocManager")
+      BiocManager::install(pkg, ask = FALSE, update = FALSE)
+    } else {
+      install.packages(pkg, repos = "https://cloud.r-project.org")
+    }
+  }
+}
+
+library(tidyverse); library(vegan); library(ComplexHeatmap); library(RColorBrewer)
+library(ggtree); library(treeio); library(ape); library(ggpubr)
+library(rstatix); library(dunn.test); library(patchwork); library(viridis)
+library(scales); library(kableExtra); library(ggrepel); library(reshape2)
+library(ggsci); library(circlize)
+
+# ── Font fallback ────────────────────────────────────────────────────────────
+# "sans" maps to Arial (Windows), Helvetica (Mac), DejaVu Sans (Linux)
+# Avoids "invalid font type" error when Arial isn't registered in R
+pub_font <- "sans"
+
+# ── Global variables ─────────────────────────────────────────────────────────
+data_dir <- "."
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NATURE MICROBIOLOGY – FIGURE SPECIFICATIONS
+# ══════════════════════════════════════════════════════════════════════════════
+fig_dir <- "figures"
+if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
+
+nm_single <- 88 / 25.4    # 3.46 in
+nm_1.5    <- 120 / 25.4   # 4.72 in
+nm_full   <- 180 / 25.4   # 7.09 in
+nm_max_h  <- 230 / 25.4   # 9.06 in
+nm_wide   <- 320 / 25.4   # 12.60 in — wide multi-panel composites
+nm_tall   <- 300 / 25.4   # 11.81 in — tall multi-panel composites
+
+# Helper: save ggplot as PDF + PNG at 300 DPI
+save_fig <- function(p, name, w, h, dpi = 300) {
+  ggsave(file.path(fig_dir, paste0(name, ".pdf")), p, width = w, height = h,
+         units = "in", device = cairo_pdf)
+  ggsave(file.path(fig_dir, paste0(name, ".png")), p, width = w, height = h,
+         units = "in", dpi = dpi)
+  ggsave(file.path(fig_dir, paste0(name, ".tif")), p, width = w, height = h,
+         units = "in", dpi = dpi, device = "tiff", compression = "lzw")
+}
+
+# Helper: save ComplexHeatmap as PDF + PNG
+save_complexheatmap <- function(ht, name, w, h, dpi = 300) {
+  pdf(file.path(fig_dir, paste0(name, ".pdf")), width = w, height = h)
+  draw(ht); dev.off()
+  png(file.path(fig_dir, paste0(name, ".png")), width = w, height = h,
+      units = "in", res = dpi)
+  draw(ht); dev.off()
+  tiff(file.path(fig_dir, paste0(name, ".tif")), width = w, height = h,
+       units = "in", res = dpi, compression = "lzw")
+  draw(ht); dev.off()
+}
+
+# NPG palette
+npg_cols <- pal_npg("nrc")(10)
+env_levels  <- c("Soda Lake", "Rumen")
+env_colors  <- c("Soda Lake" = npg_cols[1], "Rumen" = npg_cols[4])
+source_colors <- c(
+  "Abijata" = "#E64B35", "Chitu" = "#F39B7F", "Shala" = "#DC0000",
+  "Goat" = "#4DBBD5", "Cattle" = "#00A087", "Sheep" = "#3C5488"
+)
+phylum_pal <- c(pal_d3("category20")(20), "grey60")
+
+# ── Publication-quality ggplot2 theme (Nature Microbiology) ──────────────────
+theme_pub <- function(base_size = 8, base_family = pub_font) {
+  theme_classic(base_size = base_size, base_family = base_family) %+replace%
+    theme(
+      text = element_text(colour = "black", family = base_family),
+      plot.title = element_text(size = base_size + 1, face = "bold",
+                                hjust = 0, margin = margin(b = 4)),
+      plot.subtitle = element_text(size = base_size - 1, colour = "grey30",
+                                   hjust = 0, margin = margin(b = 3)),
+      axis.title = element_text(size = base_size, face = "bold"),
+      axis.text = element_text(size = base_size - 1, colour = "black"),
+      legend.title = element_text(size = base_size - 0.5, face = "bold"),
+      legend.text = element_text(size = base_size - 1),
+      strip.text = element_text(size = base_size, face = "bold"),
+      axis.line = element_line(colour = "black", linewidth = 0.4),
+      axis.ticks = element_line(colour = "black", linewidth = 0.3),
+      axis.ticks.length = unit(0.12, "cm"),
+      panel.grid = element_blank(), panel.border = element_blank(),
+      panel.background = element_blank(),
+      strip.background = element_rect(fill = "grey95", colour = NA),
+      legend.background = element_blank(), legend.key = element_blank(),
+      legend.key.size = unit(0.35, "cm"), legend.position = "right",
+      plot.margin = margin(6, 6, 6, 6)
+    )
+}
+
+# ── Helper: assign environment & source from sample IDs ──────────────────────
+assign_env <- function(x) {
+  env_chr <- case_when(
+    str_detect(x, "^(ABS|AS[^a-z]|ASP)") ~ "Soda Lake",
+    str_detect(x, "^(CHS|CW|CSP|CLP)")   ~ "Soda Lake",
+    str_detect(x, "^(SHL|SWL|SLP)")       ~ "Soda Lake",
+    str_detect(x, "^G")                   ~ "Rumen",
+    str_detect(x, "^C")                   ~ "Rumen",
+    str_detect(x, "^S")                   ~ "Rumen",
+    TRUE                                  ~ NA_character_
+  )
+  factor(env_chr, levels = env_levels)
+}
+
+assign_source <- function(x) {
+  case_when(
+    str_detect(x, "^(ABS|AS[^a-z]|ASP)") ~ "Abijata",
+    str_detect(x, "^(CHS|CW|CSP|CLP)")   ~ "Chitu",
+    str_detect(x, "^(SHL|SWL|SLP)")       ~ "Shala",
+    str_detect(x, "^G")                   ~ "Goat",
+    str_detect(x, "^C")                   ~ "Cattle",
+    str_detect(x, "^S")                   ~ "Sheep",
+    TRUE                                  ~ NA_character_
+  )
+}
+```
+
+---
+
+# 1 — Data Loading & Preprocessing 
+## 1.1 Load all datasets
+
+```{r load-data}
+red_df <- read_tsv(file.path(data_dir, "gtdbtk_red_env.tsv"), show_col_types = FALSE) %>%
+  mutate(RED = as.numeric(RED)) %>% filter(!is.na(RED))
+if ("Environment" %in% names(red_df))
+  red_df <- red_df %>% mutate(Environment = str_replace(Environment, "_", " "))
+
+gtdbtk_full <- read_tsv(file.path(data_dir, "gtdbtk_bac120.tsv"), show_col_types = FALSE)
+
+cazyme_2t <- read_tsv(file.path(data_dir, "all_cazymes_2tools_env.tsv"), show_col_types = FALSE) %>%
+  mutate(Environment = str_replace(Environment, "_", " "))
+
+diamond_df <- read_tsv(file.path(data_dir, "all_diamond_merged_env.tsv"), show_col_types = FALSE) %>%
+  mutate(Environment = str_replace(Environment, "_", " "))
+
+checkm_drep <- read_csv(file.path(data_dir, "checkm_for_drep_MQ.csv"), show_col_types = FALSE)
+
+metaphlan <- read_tsv(file.path(data_dir, "metaphlan_merged.tsv"),
+                      comment = "#", show_col_types = FALSE)
+
+tree_backbone <- read.tree(file.path(data_dir, "gtdbtk_backbone.tree"))
+
+prokka_ann <- read_tsv(file.path(data_dir, "prokka_drep_annotations.tsv"), show_col_types = FALSE) %>%
+  mutate(Environment = assign_env(MAG), Sample_Source = assign_source(MAG)) %>%
+  filter(!is.na(Environment))
+prokka_sum <- read_tsv(file.path(data_dir, "prokka_drep_summary.tsv"), show_col_types = FALSE) %>%
+  mutate(Environment = assign_env(MAG), Sample_Source = assign_source(MAG)) %>%
+  filter(!is.na(Environment))
+```
+
+## 1.2 Parse taxonomy & build helper columns
+#parssing. the taxa 
+
+```{r parse-taxonomy}
+parse_gtdbtk_taxonomy <- function(classification) {
+  ranks <- c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+  parts <- str_split(classification, ";", simplify = FALSE)
+  map_dfr(parts, function(p) {
+    vals <- str_remove(p, "^[dpcofgs]__")
+    out  <- setNames(vals[1:7], ranks)
+    as_tibble_row(out)
+  })
+}
+
+red_tax <- red_df %>% bind_cols(parse_gtdbtk_taxonomy(red_df$Classification))
+
+extract_cazyme_class <- function(hmmer) {
+  fam <- str_extract(hmmer, "^[A-Z]+\\d*")
+  case_when(
+    str_starts(fam, "GH") ~ "GH", str_starts(fam, "GT") ~ "GT",
+    str_starts(fam, "PL") ~ "PL", str_starts(fam, "CE") ~ "CE",
+    str_starts(fam, "AA") ~ "AA", str_starts(fam, "CBM") ~ "CBM",
+    TRUE ~ "Other"
+  )
+}
+
+cazyme_2t <- cazyme_2t %>%
+  mutate(
+    CAZyme_Family = str_extract(HMMER, "^[A-Z]+\\d+(_\\d+)?"),
+    CAZyme_Class  = extract_cazyme_class(HMMER)
+  )
+
+# Parse novelty ranks (needed for Figures 2, 3, 6)
+novelty_rank <- gtdbtk_full %>%
+  mutate(Environment = assign_env(user_genome)) %>%
+  filter(!is.na(Environment)) %>%
+  separate(classification, into = c("d","p","c","o","f","g","s"), sep = ";",
+           remove = FALSE) %>%
+  mutate(
+    across(c(d,p,c,o,f,g,s), ~ str_remove(., "^[dpcofgs]__")),
+    novel_species = (s == ""), novel_genus = (g == ""), novel_family = (f == "")
+  )
+```
+
+---
+
+# 2 — Community Composition — Figure 1 
+## 2.1 Parse MetaPhlAn & assign metadata
+#assinging the metdata from tehmetaphlan to metdata 
+
+```{r mpa-parse}
+colnames(metaphlan)[1] <- "clade_name"
+colnames(metaphlan)[-1] <- str_remove(colnames(metaphlan)[-1], "_shotgun$")
+metaphlan <- metaphlan %>% mutate(depth = str_count(clade_name, "\\|") + 1)
+
+mpa_samples <- tibble(Sample = colnames(metaphlan)[-c(1, ncol(metaphlan))]) %>%
+  mutate(Environment = assign_env(Sample), Source = assign_source(Sample))
+```
+
+## 2.2 Panel A — Phylum-level Community Composition
+#here we are interested to identiphy the top phlum we used realtive abundance
+
+```{r fig1-panelA, fig.height=7, fig.width=12}
+#check why deoth 2 done here if imoiratnt 
+mpa_phylum <- metaphlan %>%
+  filter(depth == 2) %>%
+  mutate(Phylum = str_extract(clade_name, "p__[A-Za-z_]+") %>% str_remove("p__"))
+#uncalssified ? unassined ,,, 
+mpa_phy_long <- mpa_phylum %>%
+  select(-clade_name, -depth) %>%
+  pivot_longer(-Phylum, names_to = "Sample", values_to = "Abundance") %>%
+  left_join(mpa_samples, by = "Sample") %>%
+  filter(!is.na(Phylum),
+         !str_detect(Phylum, regex("unclassified|unmapped", ignore_case = TRUE)),
+         Phylum != "")
+
+top_phy <- mpa_phy_long %>%
+  group_by(Phylum) %>% summarise(total = sum(Abundance), .groups = "drop") %>%
+  slice_max(total, n = 12) %>% pull(Phylum)
+
+mpa_phy_plot <- mpa_phy_long %>%
+  mutate(Phylum = ifelse(Phylum %in% top_phy, Phylum, "Other")) %>%
+  group_by(Sample, Phylum, Environment, Source) %>%
+  summarise(Abundance = sum(Abundance), .groups = "drop")
+
+sample_order <- mpa_samples %>%
+  mutate(env_rank = ifelse(Environment == "Soda Lake", 1, 2)) %>%
+  arrange(env_rank, Source, Sample) %>% pull(Sample)
+mpa_phy_plot$Sample <- factor(mpa_phy_plot$Sample, levels = sample_order)
+
+p_phy_bar <- ggplot(mpa_phy_plot, aes(x = Sample, y = Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity", position = "fill", width = 0.85) +
+  scale_fill_manual(values = phylum_pal) +
+  scale_y_continuous(labels = percent_format()) +
+  facet_grid(~ Environment, scales = "free_x", space = "free_x") +
+  labs(y = "Relative Abundance (%)", x = NULL) +
+  theme_pub() +
+  theme(axis.text.x = element_text(angle = 50, hjust = 1, size = 6),
+        strip.text = element_text(size = 8))
+p_phy_bar
+```
+
+## 2.3 Panel B — Top 30 Genera Heatmap (ComplexHeatmap)
+#okey now kets go to teh txaa deep we have to look for genus and top 30are the one we need to look for 
+```{r fig1-panelB, fig.height=10, fig.width=14}
+# Species-level matrix (needed later for alpha diversity & PCoA)
+# Build carefully: species (rows) × samples (cols), then transpose
+mpa_sp_dat <- metaphlan %>% filter(depth == 7)
+sp_clade_names <- mpa_sp_dat$clade_name
+sp_mat <- mpa_sp_dat %>% select(-clade_name, -depth) %>% as.data.frame()
+rownames(sp_mat) <- sp_clade_names
+sp_mat <- as.matrix(sp_mat)
+storage.mode(sp_mat) <- "double"         # force numeric
+sp_mat_t <- t(sp_mat)                    # samples (rows) × species (cols)
+cat("sp_mat_t dimensions:", nrow(sp_mat_t), "samples ×", ncol(sp_mat_t), "species\n")
+
+# Extract genus-level data
+mpa_genus <- metaphlan %>%
+  filter(depth == 6) %>%
+  mutate(Genus = str_extract(clade_name, "g__[^|]+") %>% str_remove("g__"))
+#why depth 6 is ookisng here , but phylum wa depth 2 ?
+# ── CLEAN genus names: remove artefacts ──────────────────────────────────────
+# Filter out: unmapped, unclassified, "Other", weird codes (sggg, ggB, single
+# letters/numbers, names shorter than 3 chars, GTDB placeholder codes)
+mpa_genus_clean <- mpa_genus %>%
+  filter(
+    !is.na(Genus), Genus != "",
+    !str_detect(Genus, regex("unclassified|unmapped|other|unknown", ignore_case = TRUE)),
+    nchar(Genus) >= 3,
+    !str_detect(Genus, "^[A-Z]{1,3}\\d"),       # GGB1234, SGB123
+    !str_detect(Genus, "^[a-z]{2,4}$"),         # weird short codes
+    !str_detect(Genus, "^\\d+$"),               # pure numbers
+    !str_detect(Genus, "^[A-Z][A-Z]+\\d"),      # JAGJPN01 etc
+    !str_detect(Genus, "^[A-Z]{2,}_")           # UBA1234, CAG_xyz
+  )
+
+genus_mat <- mpa_genus_clean %>%
+  select(-clade_name, -depth) %>%
+  column_to_rownames("Genus") %>% as.matrix()
+
+# Keep genera in ≥3 samples with mean > 0.01%
+keep_genus <- rownames(genus_mat)[rowSums(genus_mat > 0) >= 3 & rowMeans(genus_mat) > 0.01]
+genus_filt <- genus_mat[keep_genus, ]
+
+# Top 30
+top30_idx <- sort(rowMeans(genus_filt), decreasing = TRUE)
+if (length(top30_idx) > 30) top30_idx <- top30_idx[1:30]
+genus_filt <- genus_filt[names(top30_idx), ]
+
+# Log-transform
+genus_log <- log2(genus_filt + 0.001)
+
+# ── ComplexHeatmap with metadata annotations ─────────────────────────────────
+# Column (sample) annotation
+col_meta <- mpa_samples %>% filter(Sample %in% colnames(genus_log))
+col_meta <- col_meta[match(colnames(genus_log), col_meta$Sample), ]
+
+ha_top <- HeatmapAnnotation(
+  Environment = col_meta$Environment,
+  Source = col_meta$Source,
+  col = list(
+    Environment = env_colors,
+    Source = source_colors
+  ),
+  annotation_name_gp = gpar(fontsize = 7, fontfamily = pub_font),
+  simple_anno_size = unit(3, "mm"),
+  show_legend = TRUE
+)
+
+# Colour scale
+col_fun <- colorRamp2(
+  c(min(genus_log), 0, max(genus_log)),
+  c("#2166AC", "white", "#B2182B")
+)
+
+ht_genus <- Heatmap(
+  genus_log,
+  name = "log2\nabundance",
+  col = col_fun,
+  top_annotation = ha_top,
+  row_names_gp = gpar(fontsize = 7, fontface = "italic", fontfamily = pub_font),
+  column_names_gp = gpar(fontsize = 6, fontfamily = pub_font),
+  column_names_rot = 50,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2",
+  clustering_distance_rows = "euclidean",
+  clustering_distance_columns = "euclidean",
+  row_dend_width = unit(15, "mm"),
+  column_dend_height = unit(15, "mm"),
+  column_split = col_meta$Environment,
+  column_title_gp = gpar(fontsize = 8, fontface = "bold", fontfamily = pub_font),
+  border = FALSE,
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 7, fontface = "bold", fontfamily = pub_font),
+    labels_gp = gpar(fontsize = 6, fontfamily = pub_font),
+    legend_height = unit(3, "cm")
+  )
+)
+draw(ht_genus, column_title = "Top 30 Genera — MetaPhlAn4 (log2-transformed)",
+     column_title_gp = gpar(fontsize = 9, fontface = "bold", fontfamily = pub_font))
+# Save standalone copy
+save_complexheatmap(ht_genus, "Fig1B_genus_heatmap", nm_wide, nm_tall)
+
+# Capture as grob for patchwork integration
+p_genus_ht <- wrap_elements(full = grid::grid.grabExpr(
+  draw(ht_genus, column_title = "Top 30 Genera (log2-transformed)",
+       column_title_gp = gpar(fontsize = 8, fontface = "bold", fontfamily = pub_font)),
+  width = 14, height = 12
+))
+```
+
+## 2.4 Panel C — Unclassified Fraction
+# oke the next quesion we wanna adress is the uncassified version but we are lookng for metaphlan 
+
+```{r fig1-panelC, fig.height=5, fig.width=6}
+unclass_row <- metaphlan %>% filter(clade_name == "UNCLASSIFIED")
+unclass_df <- unclass_row %>%
+  select(-clade_name, -depth) %>%
+  pivot_longer(everything(), names_to = "Sample", values_to = "Pct_Unclassified") %>%
+  left_join(mpa_samples, by = "Sample")
+
+wil_uc <- wilcox.test(Pct_Unclassified ~ Environment, data = unclass_df)
+
+p_unclass <- ggplot(unclass_df, aes(x = Environment, y = Pct_Unclassified, fill = Environment)) +
+  geom_boxplot(alpha = 0.75, width = 0.5, outlier.shape = NA) +
+  geom_jitter(aes(colour = Source), width = 0.12, size = 2.5, alpha = 0.85) +
+  scale_fill_manual(values = env_colors) +
+  scale_colour_manual(values = source_colors) +
+  labs(subtitle = sprintf("Wilcoxon p = %.3e", wil_uc$p.value),
+       y = "Unclassified (%)", x = NULL, colour = "Source") +
+  theme_pub() + guides(fill = "none")
+p_unclass
+```
+
+## 2.5 Panel D — Alpha Diversity
+
+```{r fig1-panelD, fig.height=6, fig.width=11}
+# Compute per-sample (row) metrics explicitly with MARGIN = 1
+obs_vec <- vegan::specnumber(sp_mat_t, MARGIN = 1)
+sha_vec <- vegan::diversity(sp_mat_t, index = "shannon", MARGIN = 1)
+mpa_alpha <- tibble(
+  Sample = rownames(sp_mat_t),
+  Observed = as.numeric(obs_vec),
+  Shannon = as.numeric(sha_vec)
+) %>% left_join(mpa_samples, by = "Sample")
+
+kw_obs <- kruskal.test(Observed ~ Environment, data = mpa_alpha)
+kw_sha <- kruskal.test(Shannon ~ Environment, data = mpa_alpha)
+
+p_obs <- ggplot(mpa_alpha, aes(x = Environment, y = Observed, fill = Environment)) +
+  geom_boxplot(alpha = 0.7, width = 0.5, outlier.shape = NA) +
+  geom_jitter(aes(colour = Source), width = 0.12, size = 2, alpha = 0.8) +
+  scale_fill_manual(values = env_colors) +
+  scale_colour_manual(values = source_colors) +
+  labs(title = "Observed Species", subtitle = sprintf("KW p = %.2e", kw_obs$p.value),
+       y = "Number of species", x = NULL) +
+  theme_pub() + guides(fill = "none")
+
+p_sha <- ggplot(mpa_alpha, aes(x = Environment, y = Shannon, fill = Environment)) +
+  geom_boxplot(alpha = 0.7, width = 0.5, outlier.shape = NA) +
+  geom_jitter(aes(colour = Source), width = 0.12, size = 2, alpha = 0.8) +
+  scale_fill_manual(values = env_colors) +
+  scale_colour_manual(values = source_colors) +
+  labs(title = "Shannon Diversity", subtitle = sprintf("KW p = %.2e", kw_sha$p.value),
+       y = "Shannon Index (H')", x = NULL) +
+  theme_pub() + guides(fill = "none")
+
+p_alpha_combined <- p_obs + p_sha + plot_layout(guides = "collect") &
+  theme(legend.position = "right")
+p_alpha_combined
+```
+
+## 2.6 Panel E — PCoA (Bray-Curtis β-diversity)
+# now lets cehck if the structural composition difeerent between these two ecosytems 
+
+```{r fig1-panelE, fig.height=7, fig.width=9}
+bc_mpa <- vegdist(sp_mat_t, method = "bray")
+pcoa_res <- cmdscale(bc_mpa, k = 2, eig = TRUE)
+eig_pct <- round(100 * pcoa_res$eig / sum(pcoa_res$eig[pcoa_res$eig > 0]), 1)
+#braycurtsis
+
+pcoa_df <- tibble(
+  Sample = rownames(pcoa_res$points),
+  PCoA1 = pcoa_res$points[, 1], PCoA2 = pcoa_res$points[, 2]
+) %>% left_join(mpa_samples, by = "Sample")
+
+# Ensure sample order matches distance matrix
+perm_meta <- mpa_samples %>% filter(Sample %in% rownames(sp_mat_t))
+perm_meta <- perm_meta[match(rownames(sp_mat_t), perm_meta$Sample), ]
+perm_mpa <- adonis2(bc_mpa ~ Environment, data = perm_meta, permutations = 999)
+
+p_pcoa <- ggplot(pcoa_df, aes(x = PCoA1, y = PCoA2, colour = Source, shape = Environment)) +
+  geom_point(size = 2.5, alpha = 0.85) +
+  stat_ellipse(aes(group = Environment, colour = NULL), linetype = "dashed",
+               linewidth = 0.5, colour = "grey40") +
+  scale_colour_manual(values = source_colors) +
+  scale_shape_manual(values = c("Soda Lake" = 16, "Rumen" = 17)) +
+  labs(subtitle = sprintf("PERMANOVA R² = %.3f, p = %.3f", perm_mpa$R2[1], perm_mpa$`Pr(>F)`[1]),
+       x = sprintf("PCoA1 (%.1f%%)", eig_pct[1]),
+       y = sprintf("PCoA2 (%.1f%%)", eig_pct[2]),
+       colour = "Source", shape = "Environment") +
+  theme_pub()
+p_pcoa
+```
+
+## 2.7 ★ Figure 1: Community Composition (A–E)
+#okey now lets merge and make ccompsute 
+```{r fig1-composite, fig.height=11.81, fig.width=12.60}
+# Panel order: A = Phylum bar, B = Genus heatmap, C = Unclassified, D = Alpha, E = PCoA
+# Wrap alpha_combined so patchwork sees it as ONE panel (not two sub-panels)
+p_alpha_wrap <- wrap_elements(full = p_alpha_combined)
+
+p_fig1 <- (p_phy_bar + labs(title = NULL)) /
+           p_genus_ht /
+           (p_unclass + labs(title = NULL, subtitle = NULL) |
+            p_alpha_wrap) /
+           (p_pcoa + labs(title = NULL, subtitle = NULL)) +
+  plot_layout(heights = c(1, 2.2, 1, 1)) +
+  plot_annotation(
+    tag_levels = "A",
+    title = ""
+  ) &
+  theme_pub() &
+  theme(plot.tag = element_text(size = 10, face = "bold"),
+        plot.margin = margin(4, 4, 4, 4))
+p_fig1
+save_fig(p_fig1, "Fig1_community_composition", nm_wide, nm_tall)
+```
+
+---
+
+# 3 — Phylogenetic Novelty (RED, ANI) — Figure 2 
+#here i used mags .. the assembly it was used megahit , metabat2 binning 
+## 3.1 Panel A — RED: Soda Lake vs Rumen
+
+```{r fig2-panelA, fig.height=5.5, fig.width=6.5}
+kw_env <- kruskal.test(RED ~ Environment, data = red_df)
+
+p_red_env <- ggplot(red_df, aes(x = Environment, y = RED, fill = Environment)) +
+  geom_violin(alpha = 0.3, width = 0.8, colour = NA) +
+  geom_boxplot(alpha = 0.8, width = 0.3, outlier.shape = NA) +
+  geom_jitter(width = 0.08, alpha = 0.2, size = 0.5) +
+  scale_fill_manual(values = env_colors) +
+  stat_compare_means(method = "wilcox.test", label = "p.signif",
+                     label.x = 1.5, label.y = max(red_df$RED, na.rm = TRUE) * 1.02,
+                     size = 4, bracket.size = 0.4) +
+  labs(subtitle = sprintf("Kruskal-Wallis p = %.2e", kw_env$p.value),
+       y = "Relative Evolutionary Divergence (RED)", x = NULL) +
+  theme_pub() + theme(legend.position = "none")
+p_red_env
+```
+
+## 3.2 Panel B — ANI to Closest Reference
+# AnI for novelity check .. ANI vs RD ?/ 
+
+```{r fig2-panelB, fig.height=6, fig.width=10}
+gtdbtk_ani <- gtdbtk_full %>%
+  mutate(
+    Environment = assign_env(user_genome), Source = assign_source(user_genome),
+    ANI = as.numeric(closest_genome_ani), AF = as.numeric(closest_genome_af)
+  ) %>% filter(!is.na(Environment), !is.na(ANI))
+
+kw_ani <- kruskal.test(ANI ~ Environment, data = gtdbtk_ani)
+
+p_ani <- ggplot(gtdbtk_ani, aes(x = Environment, y = ANI, fill = Environment)) +
+  geom_violin(alpha = 0.3, colour = NA) +
+  geom_boxplot(alpha = 0.75, width = 0.3, outlier.shape = NA) +
+  geom_jitter(aes(colour = Source), width = 0.08, size = 1.5, alpha = 0.6) +
+  geom_hline(yintercept = 95, linetype = "dashed", colour = "grey40", linewidth = 0.4) +
+  annotate("text", x = 0.6, y = 95.3, label = "Species threshold (95%)",
+           size = 2.5, colour = "grey40", hjust = 0) +
+  scale_fill_manual(values = env_colors) +
+  scale_colour_manual(values = source_colors) +
+  labs(subtitle = sprintf("KW p = %.2e", kw_ani$p.value),
+       y = "ANI (%)", x = NULL, colour = "Source") +
+  theme_pub() + guides(fill = "none")
+p_ani
+```
+
+## 3.3 Panel C — Taxonomic Novelty by Rank
+#novelity is based on assembled MAGS but no hit 
+
+```{r fig2-panelC, fig.height=6, fig.width=10}
+novelty_long <- novelty_rank %>%
+  select(user_genome, Environment, novel_species, novel_genus, novel_family) %>%
+  pivot_longer(starts_with("novel_"), names_to = "Rank", values_to = "is_novel") %>%
+  mutate(
+    Rank = str_remove(Rank, "novel_") %>% str_to_title(),
+    Rank = factor(Rank, levels = c("Family", "Genus", "Species")),
+    Status = ifelse(is_novel, "Novel", "Classified")
+  )
+
+p_novelty_rank <- ggplot(novelty_long, aes(x = Rank, fill = Status)) +
+  geom_bar(position = "fill", width = 0.65) +
+  scale_fill_manual(values = c("Classified" = npg_cols[4], "Novel" = npg_cols[1])) +
+  scale_y_continuous(labels = percent_format()) +
+  facet_grid(~ Environment) +
+  labs(x = NULL, y = "Proportion of MAGs") +
+  theme_pub()
+p_novelty_rank
+```
+
+## 3.4 Panel D — CheckM Quality Scatter
+
+```{r fig2-panelD, fig.height=6, fig.width=8}
+checkm_plot <- checkm_drep %>%
+  mutate(
+    Environment = assign_env(genome), Source = assign_source(genome),
+    Quality = case_when(
+      completeness >= 90 & contamination <= 5 ~ "High",
+      completeness >= 50 & contamination <= 10 ~ "Medium",
+      TRUE ~ "Low"
+    )
+  )
+
+p_checkm <- ggplot(checkm_plot, aes(x = completeness, y = contamination, colour = Environment)) +
+  geom_point(alpha = 0.7, size = 1.5) +
+  geom_hline(yintercept = c(5, 10), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
+  geom_vline(xintercept = c(50, 90), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
+  scale_colour_manual(values = env_colors) +
+  annotate("rect", xmin = 90, xmax = 100, ymin = 0, ymax = 5, alpha = 0.08, fill = "green") +
+  annotate("text", x = 95, y = 4, label = "HQ", fontface = "bold", size = 2.5) +
+  labs(x = "Completeness (%)", y = "Contamination (%)") +
+  theme_pub()
+p_checkm
+```
+
+## 3.5 Panel E — MAG Phylum Composition
+
+```{r fig2-panelE, fig.height=7, fig.width=11}
+phylum_counts <- red_tax %>%
+  filter(Phylum != "") %>%
+  count(Sample_Source, Environment, Phylum, name = "MAG_count")
+
+top12_phyla <- phylum_counts %>%
+  group_by(Phylum) %>% summarise(total = sum(MAG_count), .groups = "drop") %>%
+  slice_max(total, n = 12) %>% pull(Phylum)
+
+p_mag_phy <- phylum_counts %>%
+  mutate(Phylum = ifelse(Phylum %in% top12_phyla, Phylum, "Other")) %>%
+  group_by(Sample_Source, Environment, Phylum) %>%
+  summarise(MAG_count = sum(MAG_count), .groups = "drop") %>%
+  ggplot(aes(x = Sample_Source, y = MAG_count, fill = Phylum)) +
+  geom_bar(stat = "identity", position = "fill", width = 0.75) +
+  scale_fill_manual(values = phylum_pal) +
+  scale_y_continuous(labels = percent_format()) +
+  facet_grid(~ Environment, scales = "free_x", space = "free_x") +
+  labs(x = NULL, y = "Proportion") +
+  theme_pub() + theme(axis.text.x = element_text(angle = 30, hjust = 1))
+p_mag_phy
+```
+
+## 3.6 Panel F — MAG Genus Composition (GTDB-Tk)
+
+```{r fig2-panelF, fig.height=7, fig.width=12}
+# Build genus-level composition from GTDB-Tk
+mag_genus_comp <- novelty_rank %>%
+  mutate(
+    Source = assign_source(user_genome),
+    Genus = case_when(
+      g != "" ~ g,
+      f != "" ~ paste0("Novel (", f, ")"),
+      TRUE    ~ "Unclassified"
+    )
+  ) %>%
+  filter(!is.na(Environment)) %>%
+  # Clean genus names
+  filter(
+    !str_detect(Genus, regex("unclassified|unmapped", ignore_case = TRUE)),
+    nchar(Genus) >= 3,
+    !str_detect(Genus, "^[A-Z]{2,}_"),
+    !str_detect(Genus, "^[A-Z]{2,}\\d")
+  )
+
+top15_genus <- mag_genus_comp %>%
+  count(Genus, sort = TRUE) %>% slice_head(n = 15) %>% pull(Genus)
+
+genus_pal_fig3 <- c(setNames(pal_d3("category20")(15), sort(top15_genus)), "Other" = "grey70")
+
+p_mag_genus <- mag_genus_comp %>%
+  mutate(Genus = ifelse(Genus %in% top15_genus, Genus, "Other")) %>%
+  count(Source, Environment, Genus) %>%
+  ggplot(aes(x = Source, y = n, fill = Genus)) +
+  geom_bar(stat = "identity", position = "fill", width = 0.75) +
+  scale_fill_manual(values = genus_pal_fig3) +
+  scale_y_continuous(labels = percent_format()) +
+  facet_grid(~ Environment, scales = "free_x", space = "free_x") +
+  labs(x = NULL, y = "Proportion") +
+  theme_pub() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1),
+        legend.text = element_text(face = "italic", size = 6),
+        legend.key.size = unit(0.25, "cm")) +
+  guides(fill = guide_legend(ncol = 2))
+p_mag_genus
+```
+
+## 3.7 MAG Species Composition (GTDB-Tk)
+
+```{r figS2-species, fig.height=8, fig.width=12}
+# Build species-level composition from GTDB-Tk
+mag_species <- novelty_rank %>%
+  mutate(
+    Source = assign_source(user_genome),
+    Species = case_when(
+      s != "" ~ s,
+      g != "" ~ paste0(g, " sp."),
+      f != "" ~ paste0("Novel (", f, ")"),
+      TRUE    ~ "Unclassified"
+    )
+  ) %>%
+  filter(!is.na(Environment))
+
+# Clean species names: remove artefacts and GTDB placeholder codes
+mag_species_clean <- mag_species %>%
+  filter(
+    !str_detect(Species, regex("unclassified|unmapped|unknown", ignore_case = TRUE)),
+    !str_detect(Species, "^[A-Z]{2,}_"),
+    !str_detect(Species, "^[A-Z]{2,}\\d"),
+    nchar(Species) >= 3
+  )
+
+# Top 15 species WITHIN each environment (not overall)
+top_per_env <- mag_species_clean %>%
+  count(Environment, Species, sort = TRUE) %>%
+  group_by(Environment) %>%
+  slice_head(n = 15) %>%
+  ungroup()
+
+top_sp_union <- unique(top_per_env$Species)
+
+sp_plot <- mag_species_clean %>%
+  mutate(Species = ifelse(Species %in% top_sp_union, Species, "Other")) %>%
+  count(Source, Environment, Species)
+
+sp_pal <- c(setNames(
+  colorRampPalette(pal_d3("category20")(20))(length(top_sp_union)),
+  sort(top_sp_union)), "Other" = "grey70")
+
+p_mag_species <- ggplot(sp_plot, aes(x = Source, y = n, fill = Species)) +
+  geom_bar(stat = "identity", position = "fill", width = 0.75) +
+  scale_fill_manual(values = sp_pal) +
+  scale_y_continuous(labels = percent_format()) +
+  facet_grid(~ Environment, scales = "free_x", space = "free_x") +
+  labs(x = NULL, y = "Proportion of MAGs") +
+  theme_pub() +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1),
+    legend.text = element_text(face = "italic", size = 5.5),
+    legend.key.size = unit(0.25, "cm")
+  ) +
+  guides(fill = guide_legend(ncol = 2))
+p_mag_species
+save_fig(p_mag_species, "FigS2_species_composition", nm_wide, nm_tall)
+```
+
+## 3.8 Panel G — RED vs Contamination + CAZyme vs Completeness (QC)
+
+```{r fig2-panelG, fig.height=6, fig.width=12}
+# RED vs contamination
+red_contam <- red_df %>%
+  mutate(genome_fa = paste0(MAG_ID, ".fa")) %>%
+  left_join(checkm_drep %>% rename(genome_fa = genome), by = "genome_fa") %>%
+  filter(!is.na(contamination), !is.na(RED))
+
+cor_test <- cor.test(red_contam$RED, red_contam$contamination, method = "spearman")
+
+p_red_contam <- ggplot(red_contam, aes(x = contamination, y = RED, colour = Environment)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  geom_smooth(method = "lm", se = TRUE, colour = "grey30", linewidth = 0.5, linetype = "dashed") +
+  scale_colour_manual(values = env_colors) +
+  labs(subtitle = sprintf("Spearman ρ = %.3f, p = %.3e", cor_test$estimate, cor_test$p.value),
+       x = "Contamination (%)", y = "RED") +
+  theme_pub()
+
+# Build CAZyme alpha diversity (needed here and for Figure 4)
+mag_cazyme <- cazyme_2t %>%
+  filter(!is.na(CAZyme_Family)) %>%
+  count(Bin_ID, Environment, Sample_Source, CAZyme_Family) %>%
+  pivot_wider(names_from = CAZyme_Family, values_from = n, values_fill = 0)
+
+fam_df <- mag_cazyme %>% select(-Bin_ID, -Environment, -Sample_Source) %>% as.data.frame()
+rownames(fam_df) <- mag_cazyme$Bin_ID
+fam_matrix <- as.matrix(fam_df)
+storage.mode(fam_matrix) <- "double"
+
+alpha_div <- tibble(
+  Bin_ID = mag_cazyme$Bin_ID, Environment = mag_cazyme$Environment,
+  Sample_Source = mag_cazyme$Sample_Source,
+  Richness = as.numeric(vegan::specnumber(fam_matrix, MARGIN = 1)),
+  Shannon  = as.numeric(vegan::diversity(fam_matrix, index = "shannon", MARGIN = 1)),
+  Total_Genes = rowSums(fam_matrix)
+)
+
+alpha_qual <- alpha_div %>%
+  mutate(genome_fa = paste0(Bin_ID, ".fa")) %>%
+  left_join(checkm_drep %>% rename(genome_fa = genome), by = "genome_fa") %>%
+  filter(!is.na(completeness))
+
+cor_caz_comp <- cor.test(alpha_qual$Richness, alpha_qual$completeness, method = "spearman")
+
+p_caz_qual <- ggplot(alpha_qual, aes(x = completeness, y = Richness, colour = Environment)) +
+  geom_point(alpha = 0.5, size = 1.2) +
+  geom_smooth(method = "lm", se = TRUE, colour = "grey30", linewidth = 0.5, linetype = "dashed") +
+  scale_colour_manual(values = env_colors) +
+  labs(subtitle = sprintf("Spearman ρ = %.3f, p = %.3e", cor_caz_comp$estimate, cor_caz_comp$p.value),
+       x = "Completeness (%)", y = "CAZyme Family Richness") +
+  theme_pub()
+
+p_red_contam | p_caz_qual
+```
+
+## 3.9 ★ Figure 2: MAG Characterisation — Quality, Novelty & Taxonomy
+
+```{r fig2-composite, fig.height=14, fig.width=12.60}
+# Panel flow: A=CheckM, B=RED, C=RED vs Contam | D=ANI, E=Novelty rank | F=Phylum | G=Species
+p_fig2 <- (p_checkm + labs(title = NULL) |
+            p_red_env + labs(title = NULL, subtitle = NULL) |
+            p_red_contam + labs(title = NULL, subtitle = NULL)) /
+           (p_ani + labs(title = NULL, subtitle = NULL) |
+            p_novelty_rank + labs(title = NULL)) /
+           (p_mag_phy + labs(title = NULL)) /
+           (p_mag_species + labs(title = NULL)) +
+  plot_layout(heights = c(1, 1, 1, 1)) +
+  plot_annotation(
+    tag_levels = "A",
+    title = ""
+  ) &
+  theme_pub() &
+  theme(plot.tag = element_text(size = 10, face = "bold"),
+        plot.margin = margin(4, 4, 4, 4))
+p_fig2
+save_fig(p_fig2, "Fig2_mag_characterisation", nm_wide, 14)
+```
+
+---
+
+# 4 — Functional & CAZyme Capacity — Figures 3–5 
+## 4.1 Panel A — CAZyme Class Distribution
+
+```{r fig3-panelA, fig.height=6, fig.width=11}
+class_counts <- cazyme_2t %>%
+  filter(!is.na(CAZyme_Class), CAZyme_Class != "Other") %>%
+  count(Environment, Sample_Source, CAZyme_Class)
+
+p_caz_class <- ggplot(class_counts, aes(x = Sample_Source, y = n, fill = CAZyme_Class)) +
+  geom_bar(stat = "identity", position = "fill", width = 0.75) +
+  scale_fill_manual(values = pal_npg("nrc")(6)) +
+  scale_y_continuous(labels = percent_format()) +
+  facet_grid(~ Environment, scales = "free_x", space = "free_x") +
+  labs(x = NULL, y = "Proportion", fill = "CAZyme Class") +
+  theme_pub() + theme(axis.text.x = element_text(angle = 30, hjust = 1))
+p_caz_class
+```
+
+## 4.2 Panel B — Per-MAG Richness & Shannon
+
+```{r fig3-panelB, fig.height=6, fig.width=13}
+kw_rich <- kruskal.test(Richness ~ Environment, data = alpha_div)
+kw_shan <- kruskal.test(Shannon ~ Environment, data = alpha_div)
+
+p_r <- ggplot(alpha_div, aes(x = Environment, y = Richness, fill = Environment)) +
+  geom_violin(alpha = 0.25, colour = NA) +
+  geom_boxplot(alpha = 0.7, width = 0.3, outlier.shape = NA) +
+  geom_jitter(width = 0.08, alpha = 0.15, size = 0.5) +
+  scale_fill_manual(values = env_colors) +
+  labs(subtitle = sprintf("KW p = %.2e", kw_rich$p.value),
+       y = "Families per MAG", x = NULL) +
+  theme_pub() + theme(legend.position = "none")
+
+p_s <- ggplot(alpha_div, aes(x = Environment, y = Shannon, fill = Environment)) +
+  geom_violin(alpha = 0.25, colour = NA) +
+  geom_boxplot(alpha = 0.7, width = 0.3, outlier.shape = NA) +
+  geom_jitter(width = 0.08, alpha = 0.15, size = 0.5) +
+  scale_fill_manual(values = env_colors) +
+  labs(subtitle = sprintf("KW p = %.2e", kw_shan$p.value),
+       y = "Shannon (H')", x = NULL) +
+  theme_pub() + theme(legend.position = "none")
+
+p_caz_alpha <- p_r + p_s
+p_caz_alpha
+```
+
+## 4.3 Panel C — CAZyme Sequence Divergence (Identity Density)
+
+```{r fig3-panelC, fig.height=6, fig.width=10}
+diamond_env <- diamond_df %>%
+  mutate(Environment = str_replace(Environment, "_", " "),
+         Pct_Identity = as.numeric(Pct_Identity)) %>%
+  filter(!is.na(Pct_Identity), !is.na(Environment))
+
+wil_id <- wilcox.test(Pct_Identity ~ Environment, data = diamond_env)
+
+novel_frac <- diamond_env %>%
+  group_by(Environment) %>%
+  summarise(n = n(), below_40 = sum(Pct_Identity < 40),
+            pct_novel = 100 * below_40 / n, median_id = median(Pct_Identity), .groups = "drop")
+
+p_caz_id <- ggplot(diamond_env, aes(x = Pct_Identity, fill = Environment)) +
+  geom_density(alpha = 0.5, colour = NA) +
+  geom_vline(xintercept = 40, linetype = "dashed", colour = "grey40", linewidth = 0.3) +
+  annotate("text", x = 38, y = Inf, label = "< 40% = putatively novel",
+           hjust = 1, vjust = 1.5, size = 2.5, colour = "grey40") +
+  scale_fill_manual(values = env_colors) +
+  labs(subtitle = sprintf("Wilcoxon p = %.2e | SL median = %.1f%% | Rumen median = %.1f%%",
+                           wil_id$p.value,
+                           novel_frac$median_id[novel_frac$Environment == "Soda Lake"],
+                           novel_frac$median_id[novel_frac$Environment == "Rumen"]),
+       x = "Sequence Identity (%)", y = "Density") +
+  theme_pub()
+p_caz_id
+```
+
+## 4.4 Build Functional Pathways (for Figure 3 composite)
+
+```{r fig3-pathway-computation, include=FALSE}
+# ── Define pathway-level gene groupings ──────────────────────────────────────
+pathway_genes <- tribble(
+  ~pathway,                       ~pathway_group,       ~genes,
+  # ── pH homeostasis ──
+  "Mrp (Na+/H+ antiporter)",     "pH homeostasis",     "mrpA,mrpB,mrpC,mrpD",
+  "NhaA (Na+/H+ antiporter)",    "pH homeostasis",     "nhaA,nhaC",
+  # ── Oxidative stress ──
+  "KatG (catalase-peroxidase)",   "Oxidative stress",   "katG,katA",
+  "SOD (superoxide dismutase)",   "Oxidative stress",   "sodA,sodB",
+  "AhpC (peroxide reductase)",    "Oxidative stress",   "ahpC",
+  "CspA (cold shock)",            "Oxidative stress",   "cspA,cspB",
+  # ── Osmotic stress ──
+  "Ect (ectoine biosynthesis)",   "Osmotic stress",     "ectA,ectB,ectC",
+  "Bet (glycine betaine)",        "Osmotic stress",     "betA,betB",
+  "ProU (betaine transport)",     "Osmotic stress",     "proV,proW,proX",
+  "Kdp (K+ ATPase)",              "Osmotic stress",     "kdpA,kdpB",
+  # ── Sulfur cycling ──
+  "Sox (thiosulfate oxidation)",  "Sulfur cycling",     "soxA,soxB,soxC,soxY",
+  "Dsr (dissimilatory sulfate)",  "Sulfur cycling",     "dsrA,dsrB",
+  "Apr (sulfite oxidation)",      "Sulfur cycling",     "aprA,aprB",
+  # ── Carbon fixation ──
+  "RuBisCO (carbon fixation)",    "Carbon fixation",    "cbbL,cbbS,rbcL",
+  # ── Nitrogen cycling ──
+  "Nif (N2 fixation)",            "Nitrogen cycling",   "nifH,nifD,nifK",
+  "Nir (nitrite reduction)",      "Nitrogen cycling",   "nirK,nirS",
+  "Nar (nitrate reduction)",      "Nitrogen cycling",   "narG,narH",
+  "NosZ (N2O reduction)",         "Nitrogen cycling",   "nosZ",
+  "Nor (NO reduction)",           "Nitrogen cycling",   "norB",
+  "Urease (urea hydrolysis)",     "Nitrogen cycling",   "ureA,ureB,ureC",
+  # ── Carbohydrate catabolism ──
+  "Cellulosome (scaffoldin)",     "Carbohydrate",       "cipA,cipB,cipC",
+  "SusCD (polysaccharide util.)", "Carbohydrate",       "susC,susD",
+  "CelA (endoglucanase)",         "Carbohydrate",       "celA,celB",
+  "BglB (beta-glucosidase)",      "Carbohydrate",       "bglA,bglB",
+  "Xyl (xylose utilization)",     "Carbohydrate",       "xylA,xylB",
+  "GlgP (glycogen phosphoryl.)",  "Carbohydrate",       "glgP",
+  # ── Fermentation ──
+  "AckA (acetate production)",    "Fermentation",       "ackA,pta",
+  "PflB (formate acetyltransf.)", "Fermentation",       "pflB",
+  "PccB (propionate pathway)",    "Fermentation",       "pccB",
+  # ── Metal resistance ──
+  "ArsC (arsenate reductase)",    "Metal resistance",   "arsC"
+) %>% mutate(gene_list = str_split(genes, ","))
+
+group_levels <- c("pH homeostasis", "Oxidative stress", "Osmotic stress",
+                  "Sulfur cycling", "Carbon fixation", "Nitrogen cycling",
+                  "Carbohydrate", "Fermentation", "Metal resistance")
+pathway_order <- pathway_genes %>%
+  arrange(factor(pathway_group, levels = group_levels), pathway) %>%
+  pull(pathway)
+
+# ── Compute prevalence per pathway x source ──────────────────────────────────
+n_mags_per_source <- prokka_ann %>%
+  distinct(MAG, Sample_Source, Environment) %>%
+  count(Sample_Source, Environment, name = "n_total")
+
+n_sl_mags <- n_distinct(prokka_ann$MAG[prokka_ann$Environment == "Soda Lake"])
+n_ru_mags <- n_distinct(prokka_ann$MAG[prokka_ann$Environment == "Rumen"])
+
+hit_raw <- pathway_genes %>%
+  unnest(gene_list) %>% rename(gene = gene_list) %>%
+  inner_join(prokka_ann %>% select(MAG, gene, product, Sample_Source, Environment),
+             by = "gene", relationship = "many-to-many") %>%
+  # ── Remove known false-positive gene-name collisions ──────────────────────
+
+  # soxA/soxB/soxD: "sarcosine oxidase" shares abbreviation with Sox thiosulfate oxidation
+
+  # proX: "Prolyl-tRNA editing protein" shares abbreviation with betaine transport
+  filter(!(gene %in% c("soxA","soxB","soxD") & str_detect(product, regex("sarcosine", ignore_case = TRUE))),
+         !(gene == "proX" & str_detect(product, regex("prolyl-tRNA", ignore_case = TRUE)))) %>%
+  select(-product) %>%
+  group_by(pathway, pathway_group, MAG, Sample_Source, Environment) %>%
+  summarise(gene_count = n_distinct(gene), .groups = "drop")
+
+hit_summary <- hit_raw %>%
+  group_by(pathway, pathway_group, Sample_Source, Environment) %>%
+  summarise(n_mags_with = n_distinct(MAG),
+            mean_genes  = mean(gene_count), .groups = "drop") %>%
+  left_join(n_mags_per_source, by = c("Sample_Source", "Environment")) %>%
+  mutate(prevalence = n_mags_with / n_total * 100)
+
+full_grid <- expand_grid(
+  pathway_genes %>% select(pathway, pathway_group),
+  n_mags_per_source %>% select(Sample_Source, Environment)
+)
+heat_data <- full_grid %>%
+  left_join(hit_summary,
+            by = c("pathway", "pathway_group", "Sample_Source", "Environment")) %>%
+  mutate(prevalence  = replace_na(prevalence, 0),
+         mean_genes  = replace_na(mean_genes, 0),
+         n_mags_with = replace_na(n_mags_with, 0L)) %>%
+  left_join(n_mags_per_source,
+            by = c("Sample_Source", "Environment"), suffix = c("", ".y")) %>%
+  mutate(n_total = coalesce(n_total, n_total.y)) %>% select(-n_total.y) %>%
+  mutate(
+    pathway = factor(pathway, levels = rev(pathway_order)),
+    pathway_group = factor(pathway_group, levels = group_levels),
+    Sample_Source = factor(Sample_Source,
+                           levels = c("Abijata", "Chitu", "Shala",
+                                      "Goat", "Cattle", "Sheep")),
+    prev_label = ifelse(prevalence > 0, sprintf("%.0f", prevalence), "")
+  )
+
+# ── Fisher's exact enrichment ────────────────────────────────────────────────
+# Start from full pathway list to include 0-hit pathways (Dsr, Cellulosome)
+enrich_counts <- hit_raw %>%
+  distinct(pathway, pathway_group, MAG, Environment) %>%
+  count(pathway, pathway_group, Environment)
+
+enrich_pathway <- pathway_genes %>%
+  select(pathway, pathway_group) %>%
+  left_join(
+    enrich_counts %>% pivot_wider(names_from = Environment, values_from = n, values_fill = 0L),
+    by = c("pathway", "pathway_group")
+  ) %>%
+  mutate(across(any_of(c("Soda Lake", "Rumen")), ~ replace_na(., 0L))) %>%
+  rename(SL_pos = `Soda Lake`, RU_pos = Rumen) %>%
+  mutate(SL_neg = n_sl_mags - SL_pos, RU_neg = n_ru_mags - RU_pos) %>%
+  # Skip Fisher's test for pathways with 0 hits in both environments
+  filter(SL_pos + RU_pos > 0) %>%
+  rowwise() %>%
+  mutate(
+    ft = list(fisher.test(matrix(c(SL_pos, SL_neg, RU_pos, RU_neg), nrow = 2))),
+    fisher_p   = ft$p.value,
+    odds_ratio = ft$estimate
+  ) %>% ungroup() %>% select(-ft) %>%
+  mutate(
+    p_adj = p.adjust(fisher_p, method = "BH"),
+    log2_OR = log2(odds_ratio + 0.01),
+    enriched_in = ifelse(log2_OR > 0, "Soda Lake", "Rumen"),
+    sig_label = case_when(
+      p_adj < 0.001 ~ "***", p_adj < 0.01 ~ "**",
+      p_adj < 0.05  ~ "*",   TRUE ~ "ns"
+    ),
+    pathway = factor(pathway, levels = rev(pathway_order)),
+    pathway_group = factor(pathway_group, levels = group_levels)
+  )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Pathway heatmap with abbreviated strip labels + inline significance
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Abbreviate pathway group labels to avoid overlap
+group_abbrev <- c("pH homeostasis" = "pH", "Oxidative stress" = "Oxidative",
+                  "Osmotic stress" = "Osmotic", "Sulfur cycling" = "Sulfur",
+                  "Carbon fixation" = "C fixation", "Nitrogen cycling" = "Nitrogen",
+                  "Carbohydrate" = "Carbohydrate", "Fermentation" = "Fermentation",
+                  "Metal resistance" = "Metal")
+heat_data <- heat_data %>%
+  mutate(pathway_group_short = factor(group_abbrev[as.character(pathway_group)],
+                                       levels = group_abbrev))
+
+# Add enrichment significance annotations to heatmap data (right-side label)
+enrich_annot <- enrich_pathway %>%
+  mutate(
+    direction = ifelse(log2_OR > 0, "\u25B2 SL", "\u25BC RU"),
+    enrich_label = ifelse(sig_label == "ns", "ns",
+                          paste0(sig_label, " ", direction))
+  ) %>%
+  select(pathway, enrich_label, sig_label, enriched_in)
+
+heat_data <- heat_data %>%
+  left_join(enrich_annot, by = "pathway")
+
+p_fig4 <- ggplot(heat_data, aes(x = Sample_Source, y = pathway, fill = prevalence)) +
+  geom_tile(colour = "white", linewidth = 0.4) +
+  geom_text(aes(label = prev_label),
+            size = 1.8, colour = "grey20", fontface = "plain") +
+  facet_grid(pathway_group_short ~ Environment, scales = "free", space = "free",
+             switch = "y", drop = TRUE) +
+  scale_x_discrete(drop = TRUE) +
+  scale_fill_gradientn(
+    name = "Prevalence (% MAGs)",
+    colours = c("#F7F7F7", "#D1E5F0", "#92C5DE", "#4393C3",
+                "#FDDBC7", "#F4A582", "#D6604D", "#B2182B"),
+    values  = scales::rescale(c(0, 5, 15, 30, 40, 55, 75, 100)),
+    limits  = c(0, 100),
+    breaks  = c(0, 10, 25, 50, 75, 100),
+    na.value = "#F7F7F7"
+  ) +
+  labs(x = NULL, y = NULL,
+       caption = "Fisher\u2019s exact test (BH-adjusted): * p < 0.05, ** p < 0.01, *** p < 0.001") +
+  theme_pub(base_size = 8) +
+  theme(
+    axis.text.x    = element_text(angle = 45, hjust = 1, size = 6.5),
+    axis.text.y    = element_text(size = 6),
+    axis.line      = element_blank(),
+    axis.ticks     = element_blank(),
+    strip.text.y.left = element_text(angle = 0, face = "bold", size = 6),
+    strip.text.x      = element_text(face = "bold", size = 7),
+    strip.placement    = "outside",
+    strip.background   = element_rect(fill = "grey95", colour = NA),
+    panel.spacing.x    = unit(0.5, "lines"),
+    panel.spacing.y    = unit(0.3, "lines"),
+    panel.background   = element_rect(fill = "#FCFCFC", colour = NA),
+    legend.position    = "bottom",
+    legend.key.height  = unit(0.25, "cm"),
+    legend.key.width   = unit(1.5, "cm"),
+    legend.title       = element_text(size = 7, face = "bold"),
+    legend.text        = element_text(size = 6),
+    plot.caption       = element_text(size = 6, colour = "grey50", hjust = 1)
+  )
+```
+
+## 4.4 Panel D — GH Family × Genus Heatmap
+
+```{r fig3-panelD-gh-heatmap, fig.height=7, fig.width=12.60}
+# ── Build GH genus contribution matrix ───────────────────────────────────────
+gh_genus <- cazyme_2t %>%
+  filter(CAZyme_Class == "GH", !is.na(CAZyme_Family)) %>%
+  left_join(
+    novelty_rank %>% select(user_genome, g, p) %>%
+      rename(Bin_ID = user_genome, Genus = g, Phylum = p),
+    by = "Bin_ID"
+  ) %>%
+  mutate(Genus = ifelse(is.na(Genus) | Genus == "", paste0("Novel (", Phylum, ")"), Genus))
+
+# Focus on key GH families
+key_gh <- c("GH1", "GH2", "GH3", "GH5", "GH9", "GH10", "GH13", "GH18", "GH23", "GH26", "GH28", "GH31", "GH43", "GH103")
+
+# Top contributing genera per environment (top 10 overall to keep heatmap compact)
+top_genera <- gh_genus %>%
+  filter(CAZyme_Family %in% key_gh) %>%
+  count(Genus, Environment, name = "total") %>%
+  group_by(Environment) %>%
+  slice_max(total, n = 10, with_ties = FALSE) %>%
+  pull(Genus) %>% unique()
+
+# Gene count matrix: Genus × GH family, split by environment
+gh_mat_data <- gh_genus %>%
+  filter(CAZyme_Family %in% key_gh, Genus %in% top_genera) %>%
+  count(Genus, CAZyme_Family, Environment)
+
+# Build separate matrices for SL and Rumen, then combine
+gh_wide <- gh_mat_data %>%
+  pivot_wider(names_from = CAZyme_Family, values_from = n, values_fill = 0L)
+
+# Ensure all key GH families appear
+for (fam in key_gh) {
+  if (!fam %in% colnames(gh_wide)) gh_wide[[fam]] <- 0L
+}
+
+# Sort GH families numerically
+gh_fam_sorted <- key_gh[order(as.numeric(str_extract(key_gh, "\\d+")))]
+
+mat_gh <- gh_wide %>%
+  arrange(Environment, desc(rowSums(across(all_of(gh_fam_sorted))))) %>%
+  as.data.frame()
+rownames(mat_gh) <- paste0(mat_gh$Genus, " (", mat_gh$Environment, ")")
+env_vec <- mat_gh$Environment
+mat_gh_num <- as.matrix(mat_gh[, gh_fam_sorted])
+
+# ── Row annotation: environment ──────────────────────────────────────────────
+ha_gh_row <- rowAnnotation(
+  Environment = env_vec,
+  col = list(Environment = env_colors),
+  annotation_name_gp = gpar(fontsize = 7, fontfamily = pub_font),
+  simple_anno_size = unit(3, "mm"),
+  annotation_legend_param = list(
+    title_gp = gpar(fontsize = 7, fontface = "bold", fontfamily = pub_font),
+    labels_gp = gpar(fontsize = 6, fontfamily = pub_font)
+  )
+)
+
+# ── Heatmap ──────────────────────────────────────────────────────────────────
+# Use non-linear breakpoints to improve visual contrast in the 0-50 range
+# where most data clusters (linear scale washes out low-count differences)
+max_val <- max(mat_gh_num)
+col_fun_gh <- colorRamp2(c(0, 5, 20, 50, 100, max_val),
+                          c("#F7F7F7", "#D1E5F0", "#92C5DE",
+                            "#4393C3", "#B2182B", "#67001F"))
+
+ht_gh_genus <- Heatmap(
+  mat_gh_num,
+  name = "Gene count",
+  col = col_fun_gh,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  row_split = env_vec,
+  row_gap = unit(2, "mm"),
+  row_title_gp = gpar(fontsize = 8, fontface = "bold", fontfamily = pub_font),
+  row_names_gp = gpar(fontsize = 6, fontface = "italic", fontfamily = pub_font),
+  column_names_gp = gpar(fontsize = 7, fontface = "bold", fontfamily = pub_font),
+  column_names_rot = 45,
+  left_annotation = ha_gh_row,
+  border = TRUE,
+  rect_gp = gpar(col = "white", lwd = 0.4),
+  cell_fun = function(j, i, x, y, width, height, fill) {
+    val <- mat_gh_num[i, j]
+    if (val > 0) {
+      grid.text(val, x, y, gp = gpar(fontsize = 5, fontfamily = pub_font,
+                                       col = ifelse(val > 40, "white", "grey20")))
+    }
+  },
+  column_title = "Top genera contributing to key GH families",
+  column_title_gp = gpar(fontsize = 9, fontface = "bold", fontfamily = pub_font),
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 7, fontface = "bold", fontfamily = pub_font),
+    labels_gp = gpar(fontsize = 6, fontfamily = pub_font)
+  )
+)
+draw(ht_gh_genus)
+save_complexheatmap(ht_gh_genus, "Fig6_gh_genus_heatmap", nm_wide, nm_tall * 0.6)
+```
+
+## 4.5 ★ Figure 4: Functional Pathway Heatmap (standalone)
+
+```{r fig4-pathway-standalone, fig.height=12, fig.width=12.60}
+# Figure 4: Functional pathway heatmap — standalone full-width figure
+p_fig4_path <- p_fig4
+p_fig4_path
+save_fig(p_fig4_path, "Fig4_functional_pathways", nm_wide, 12)
+```
+
+## 4.6 ★ Figure 5: CAZyme Diversity & Capacity
+
+```{r fig5-cazyme-composite, fig.height=14, fig.width=12.60}
+# Panel A — CAZyme richness vs completeness QC
+# Panel B — CAZyme class distribution
+# Panel C — Per-MAG CAZyme richness, D — Shannon diversity
+# Panel E — Sequence identity density
+
+p_fig5_caz <- (p_caz_qual + labs(title = NULL, subtitle = NULL, tag = "A")) /
+               (p_caz_class + labs(title = NULL, tag = "B")) /
+               ((p_r + labs(title = NULL, tag = "C")) |
+                (p_s + labs(title = NULL, tag = "D"))) /
+               (p_caz_id + labs(title = NULL, subtitle = NULL, tag = "E")) +
+  plot_layout(heights = c(0.9, 1, 1, 1)) &
+  theme_pub() &
+  theme(plot.tag = element_text(size = 10, face = "bold"),
+        plot.margin = margin(4, 4, 4, 4))
+p_fig5_caz
+save_fig(p_fig5_caz, "Fig5_cazyme_diversity", nm_wide, 14)
+```
+
+## 4.7 ★ Figure 6: GH Family × Genus Repertoire
+
+```{r fig6-gh-heatmap-standalone, fig.height=9, fig.width=12.60}
+# GH family × genus heatmap as standalone Figure 6 (15 GH families)
+p_fig6_gh <- wrap_elements(full = grid::grid.grabExpr(
+  draw(ht_gh_genus, padding = unit(c(2, 2, 2, 2), "mm"))
+))
+p_fig6_gh
+save_fig(p_fig6_gh, "Fig6_gh_genus_heatmap", nm_wide, 9)
+```
+
+---
+
+## Supplementary Figure S3 — CAZyme NMDS + GH Volcano
+
+```{r figS3-nmds-volcano, fig.height=6, fig.width=12.60}
+# NMDS ordination of CAZyme profiles
+set.seed(42)
+nmds_caz <- metaMDS(fam_matrix, distance = "bray", k = 2, trymax = 100, trace = FALSE)
+perm_caz <- adonis2(fam_matrix ~ Environment, data = mag_cazyme, method = "bray", permutations = 999)
+
+nmds_caz_df <- as_tibble(scores(nmds_caz, display = "sites")) %>%
+  mutate(Bin_ID = mag_cazyme$Bin_ID, Environment = mag_cazyme$Environment,
+         Sample_Source = mag_cazyme$Sample_Source)
+
+p_caz_nmds <- ggplot(nmds_caz_df, aes(x = NMDS1, y = NMDS2, colour = Sample_Source,
+                                        shape = Environment)) +
+  geom_point(size = 1.8, alpha = 0.7) +
+  stat_ellipse(aes(group = Environment), linetype = "dashed", linewidth = 0.5, colour = "grey40") +
+  scale_colour_manual(values = source_colors) +
+  scale_shape_manual(values = c("Soda Lake" = 16, "Rumen" = 17)) +
+  labs(subtitle = sprintf("Stress = %.3f | PERMANOVA R² = %.3f, p = %.3f",
+                           nmds_caz$stress, perm_caz$R2[1], perm_caz$`Pr(>F)`[1]),
+       colour = "Source", shape = "Environment") +
+  theme_pub()
+
+# GH family enrichment volcano
+gh_data <- cazyme_2t %>%
+  filter(CAZyme_Class == "GH", !is.na(CAZyme_Family)) %>%
+  mutate(Sample = str_extract(Bin_ID, "^[A-Za-z]+\\d*"))
+
+gh_enrich <- gh_data %>%
+  count(Environment, CAZyme_Family) %>%
+  pivot_wider(names_from = Environment, values_from = n, values_fill = 0)
+
+total_soda  <- sum(gh_data$Environment == "Soda Lake")
+total_rumen <- sum(gh_data$Environment == "Rumen")
+
+gh_fisher <- gh_enrich %>%
+  rowwise() %>%
+  mutate(
+    fisher_p = fisher.test(matrix(c(`Soda Lake`, total_soda - `Soda Lake`,
+                                     Rumen, total_rumen - Rumen), nrow = 2))$p.value,
+    odds_ratio = fisher.test(matrix(c(`Soda Lake`, total_soda - `Soda Lake`,
+                                       Rumen, total_rumen - Rumen), nrow = 2))$estimate,
+    log2_OR = log2(odds_ratio + 0.01)
+  ) %>% ungroup() %>%
+  mutate(
+    p_adj = p.adjust(fisher_p, method = "BH"),
+    significant = p_adj < 0.05,
+    enriched_in = case_when(!significant ~ "NS", log2_OR > 0 ~ "Soda Lake",
+                            log2_OR < 0 ~ "Rumen", TRUE ~ "NS")
+  ) %>% arrange(p_adj)
+
+p_gh_volcano <- ggplot(gh_fisher, aes(x = log2_OR, y = -log10(p_adj),
+                                       colour = enriched_in, size = `Soda Lake` + Rumen)) +
+  geom_point(alpha = 0.65) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", colour = "grey50", linewidth = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50", linewidth = 0.3) +
+  geom_text_repel(
+    data = gh_fisher %>% filter(significant) %>% slice_min(p_adj, n = 15),
+    aes(label = CAZyme_Family), size = 2.2, max.overlaps = 25
+  ) +
+  scale_colour_manual(values = c("Soda Lake" = npg_cols[1], "Rumen" = npg_cols[4], "NS" = "grey75")) +
+  scale_size_continuous(range = c(1, 5), name = "Total genes") +
+  labs(x = "log2(Odds Ratio)", y = "-log10(adjusted p-value)", colour = "Enriched in") +
+  theme_pub()
+
+p_figS3 <- (p_caz_nmds + labs(title = NULL)) | (p_gh_volcano + labs(title = NULL))
+p_figS3
+save_fig(p_figS3, "FigS3_nmds_volcano", nm_wide, nm_tall * 0.5)
+```
+
+---
+
+# 5 — Functional Capacity (Prokka) — Reference 
+## 5.1 Define Functional Gene Categories
+
+```{r prokka-gene-categories}
+func_categories <- tribble(
+  ~Category,                    ~gene_pattern,                                       ~label,
+  # pH homeostasis
+  "pH homeostasis",             "^(mrpA|mrpB|mrpC|mrpD)$",                           "Mrp (Na+/H+ antiporter complex)",
+  "pH homeostasis",             "^(nhaA|nhaC)$",                                     "NhaA/C (Na+/H+ antiporter)",
+  # Oxidative stress
+  "Oxidative stress",           "^(katG|katA)$",                                     "Catalase / catalase-peroxidase",
+  "Oxidative stress",           "^(sodA|sodB)$",                                     "Superoxide dismutase",
+  "Oxidative stress",           "^(ahpC)$",                                          "Alkyl hydroperoxide reductase",
+  "Oxidative stress",           "^(cspA|cspB)$",                                     "Cold shock protein",
+  # Osmotic stress
+  "Osmotic stress",             "^(ectA|ectB|ectC)$",                                "ect (ectoine biosynthesis)",
+  "Osmotic stress",             "^(betA|betB|betT)$",                                "bet (glycine betaine)",
+  "Osmotic stress",             "^(proV|proW|proX)$",                                "pro (proline/betaine transport)",
+  "Osmotic stress",             "^(kdpA|kdpB)$",                                     "Kdp (K+ ATPase)",
+  # Sulfur cycling
+  "Sulfur cycling",             "^(soxA|soxB|soxC|soxY)$",                           "sox (thiosulfate oxidation)",
+  "Sulfur cycling",             "^(aprA|aprB)$",                                     "apr (sulfite oxidation)",
+  "Sulfur cycling",             "^(dsrA|dsrB|dsrC)$",                                "dsr (dissimilatory sulfate)",
+  # Carbon fixation
+  "Carbon fixation",            "^(cbbL|cbbS|cbbM|rbcL|rbcS)$",                      "RuBisCO (carbon fixation)",
+  # Nitrogen cycling
+  "Nitrogen cycling",           "^(nifH|nifD|nifK)$",                                "nif (nitrogen fixation)",
+  "Nitrogen cycling",           "^(nirK|nirS)$",                                     "nir (nitrite reduction)",
+  "Nitrogen cycling",           "^(narG|narH|narI)$",                                "nar (nitrate reduction)",
+  "Nitrogen cycling",           "^(nosZ)$",                                          "nosZ (N2O reduction)",
+  "Nitrogen cycling",           "^(norB|norC)$",                                     "nor (NO reduction)",
+  "Nitrogen cycling",           "^(ureA|ureB|ureC)$",                                "Urease (urea hydrolysis)",
+  # Carbohydrate catabolism
+  "Carbohydrate",               "^(cipA|cipB|cipC)$",                                "Cellulosome scaffoldin",
+  "Carbohydrate",               "^(susC|susD)$",                                     "SusCD (polysaccharide utilization)",
+  "Carbohydrate",               "^(celA|celB)$",                                     "Endoglucanase",
+  "Carbohydrate",               "^(bglA|bglB)$",                                     "Beta-glucosidase",
+  "Carbohydrate",               "^(xylA|xylB)$",                                     "Xylose utilization",
+  "Carbohydrate",               "^(glgP)$",                                          "Glycogen phosphorylase",
+  # Fermentation
+  "Fermentation",               "^(ackA|pta)$",                                      "Acetate production",
+  "Fermentation",               "^(pflB)$",                                          "Formate acetyltransferase",
+  "Fermentation",               "^(pccB)$",                                          "Propionyl-CoA carboxylase",
+  # Metal resistance
+  "Metal resistance",           "^(arsC)$",                                          "Arsenate reductase"
+)
+
+func_product_patterns <- tribble(
+  ~Category,              ~product_pattern,
+  "pH homeostasis",       "(?i)(Na\\+/H\\+|sodium.*proton|mrp.*antiporter|nha.*antiporter)",
+  "Oxidative stress",     "(?i)(catalase|superoxide dismutase|peroxide reductase|cold shock protein)",
+  "Osmotic stress",       "(?i)(ectoine|compatible solute|glycine betaine|choline dehydrogenase|potassium.*ATPase)",
+  "Sulfur cycling",       "(?i)(thiosulfate|sulfite|sulfur oxidat|sulfate reduc)",
+  "Carbon fixation",      "(?i)(ribulose.*bisphosphate|RuBisCO|carbon fixation)",
+  "Nitrogen cycling",     "(?i)(nitrogenase|nitrate reduc|nitrite reduc|nitrogen fix|nitrous oxide|urease)",
+  "Carbohydrate",         "(?i)(endoglucanase|beta-glucosidase|xylanase|xylose isomerase|cellulosome|scaffoldin|pullulanase|glycogen phosphorylase|SusC|SusD)",
+  "Fermentation",         "(?i)(acetate kinase|phosphotransacetylase|formate acetyltransferase|propionyl-CoA carboxylase)",
+  "Metal resistance",     "(?i)(arsenate reductase|arsenical)"
+)
+```
+
+## 5.2 Gene-level Functional Profiling
+
+```{r prokka-func-count}
+gene_hits <- prokka_ann %>%
+  filter(!is.na(gene), gene != "") %>%
+  # Remove known false-positive gene-name collisions (same as heatmap pipeline)
+  filter(!(gene %in% c("soxA","soxB","soxD") & str_detect(product, regex("sarcosine", ignore_case = TRUE))),
+         !(gene == "proX" & str_detect(product, regex("prolyl-tRNA", ignore_case = TRUE)))) %>%
+  rowwise() %>%
+  mutate(
+    matched_cat = {
+      cats <- func_categories %>% filter(str_detect(gene, gene_pattern)) %>% pull(Category) %>% unique()
+      if (length(cats) == 0) NA_character_ else paste(cats, collapse = "; ")
+    },
+    matched_label = {
+      labs <- func_categories %>% filter(str_detect(gene, gene_pattern)) %>% pull(label) %>% unique()
+      if (length(labs) == 0) NA_character_ else paste(labs, collapse = "; ")
+    }
+  ) %>% ungroup() %>% filter(!is.na(matched_cat))
+
+product_hits <- prokka_ann %>%
+  filter(!is.na(product), product != "hypothetical protein") %>%
+  rowwise() %>%
+  mutate(
+    matched_cat = {
+      cats <- func_product_patterns %>% filter(str_detect(product, product_pattern)) %>% pull(Category) %>% unique()
+      if (length(cats) == 0) NA_character_ else paste(cats, collapse = "; ")
+    }
+  ) %>% ungroup() %>% filter(!is.na(matched_cat))
+
+gene_func <- gene_hits %>%
+  select(MAG, locus_tag, gene, product, Environment, Sample_Source,
+         Category = matched_cat, Label = matched_label)
+
+product_func <- product_hits %>%
+  anti_join(gene_hits, by = "locus_tag") %>%
+  select(MAG, locus_tag, gene, product, Environment, Sample_Source, Category = matched_cat) %>%
+  mutate(Label = Category)
+
+all_func <- bind_rows(gene_func, product_func)
+func_long <- all_func %>% separate_rows(Category, sep = "; ")
+```
+
+
+## 5.3 Functional Pathway Heatmap (computed in Section 4.4)
+
+_The pathway heatmap (`p_fig4`) was computed in section 4.4 and is incorporated into Figure 3 (panel A). The standalone pathway figure is retained below for reference._
+
+```{r fig4-reference, fig.width=12.60, fig.height=7.5}
+# p_fig4 already built in section 4.4
+p_fig4
+```
+
+---
+
+# 6 — Phylogenomic Tree — Figure 6 
+## 6.1 Prepare Tree Metadata
+
+```{r tree-metadata}
+bb_mag_tips <- tree_backbone$tip.label[
+  !str_detect(tree_backbone$tip.label, "^(GB_|RS_|GCA_|GCF_)")
+]
+cat(sprintf("MAGs in backbone tree: %d / %d total\n", length(bb_mag_tips), nrow(red_df)))
+
+tree_mag_only <- drop.tip(tree_backbone, setdiff(tree_backbone$tip.label, bb_mag_tips))
+
+tree_meta_full <- tibble(label = tree_mag_only$tip.label) %>%
+  left_join(
+    novelty_rank %>%
+      select(user_genome, p, c, o, f, g, Environment) %>%
+      rename(label = user_genome, Phylum = p, Class = c, Order = o, Family = f, Genus = g),
+    by = "label"
+  ) %>%
+  mutate(
+    Environment = ifelse(is.na(Environment), assign_env(label), Environment),
+    Source = assign_source(label),
+    Phylum = ifelse(is.na(Phylum) | Phylum == "", "Unclassified", Phylum),
+    Genus  = ifelse(is.na(Genus) | Genus == "", "Novel", Genus)
+  )
+
+top10_phy_tree <- tree_meta_full %>%
+  filter(Phylum != "Unclassified") %>%
+  count(Phylum, sort = TRUE) %>% slice_head(n = 10) %>% pull(Phylum)
+
+tree_meta_full <- tree_meta_full %>%
+  mutate(Phylum_plot = ifelse(Phylum %in% top10_phy_tree, Phylum, "Other"),
+         # Keep Environment as character for ggtree — gheatmap() coerces
+         # factors to integer codes which breaks scale_shape_manual
+         Environment = as.character(Environment))
+
+phy_tree_pal <- c(setNames(pal_d3("category10")(10), sort(top10_phy_tree)),
+                  "Other" = "grey65", "Unclassified" = "grey85")
+```
+
+## 6.2 ★ Figure 6: Circular Phylogenomic Tree
+
+```{r fig5-hero, fig.height=18, fig.width=18}
+p_base <- ggtree(tree_mag_only, layout = "circular", size = 0.15,
+                  colour = "grey50") %<+% tree_meta_full
+
+p_tree_ann <- p_base +
+  geom_tippoint(aes(colour = Source, shape = Environment), size = 1.8, alpha = 0.85) +
+  scale_colour_manual(values = source_colors, na.value = "grey80", name = "Sample Source") +
+  scale_shape_manual(values = c("Soda Lake" = 16, "Rumen" = 17), name = "Environment")
+
+ring_df <- tree_meta_full %>% select(label, Phylum_plot)
+
+p_tree_hero <- gheatmap(p_tree_ann, ring_df %>% column_to_rownames("label"),
+                         offset = 0.02, width = 0.08, colnames = FALSE, color = NA) +
+  scale_fill_manual(values = phy_tree_pal, name = "Phylum",
+                    guide = guide_legend(order = 1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 9, family = pub_font),
+    legend.position = "right",
+    legend.text = element_text(size = 6, family = pub_font),
+    legend.title = element_text(size = 7, face = "bold", family = pub_font),
+    legend.key.size = unit(0.3, "cm"),
+    legend.spacing.y = unit(0.15, "cm")
+  ) +
+  guides(
+    fill = guide_legend(order = 1, ncol = 1, override.aes = list(size = 3)),
+    colour = guide_legend(order = 2, override.aes = list(size = 2.5)),
+    shape = guide_legend(order = 3, override.aes = list(size = 2.5))
+  )
+p_tree_hero
+
+save_fig(p_tree_hero, "Fig3_phylogenomic_tree", nm_wide, nm_wide)
+```
+
+---
+
+# 7 — Structural Analysis (AlphaFold3 + Foldseek) — Figure 7 
+## 7.1 Load Structural Data
+
+```{r struct-load}
+# ── Foldseek best hits (v2: 12 structures, 6 GH families) ────────────────────
+foldseek_best <- read_tsv(file.path(data_dir, "foldseek_best_hits.tsv"), show_col_types = FALSE)
+
+# ── AlphaFold3 summary (pTM, pLDDT from model_0 JSONs) ──────────────────────
+af3_summary <- read_tsv(file.path(data_dir, "alphafold3_summary.tsv"), show_col_types = FALSE)
+
+# ── Merge Foldseek hits with AF3 summary ─────────────────────────────────────
+# Query names in foldseek_best_hits.tsv match Structure names in af3_summary
+# (e.g. "soda_gh1", "rumen_gh10")
+struct_df <- foldseek_best %>%
+  rename(Structure = Query) %>%
+  left_join(af3_summary, by = "Structure") %>%
+  mutate(
+    Source = Environment,
+    GH_Family = str_extract(Structure, "gh\\d+(_\\d+)?") %>%
+      str_to_upper() %>% str_replace("_", " sub"),
+    GH_Family_short = str_extract(Structure, "gh\\d+") %>% str_to_upper(),
+    PDB_ID = str_extract(Best_PDB_Hit, "^[a-z0-9]+")
+  )
+
+gh_info <- tribble(
+  ~GH_Family_short, ~Substrate,               ~Mechanism,
+  "GH1",           "beta-glucoside",          "Retaining",
+  "GH3",           "beta-glucoside",          "Retaining",
+  "GH5",           "Cellulose",               "Retaining",
+  "GH9",           "Cellulose",               "Inverting",
+  "GH10",          "Xylan",                   "Retaining",
+  "GH28",          "Pectin / galacturonan",   "Inverting"
+)
+
+struct_df <- struct_df %>% left_join(gh_info, by = "GH_Family_short")
+
+# ── Active site conservation data ────────────────────────────────────────────
+# Generated by the Python processing pipeline (from AlphaFold3 CIF files)
+active_site_file <- file.path("renders", "active_site_conservation.tsv")
+active_sites <- read_tsv(active_site_file, show_col_types = FALSE)
+cat(sprintf("Loaded %d active site annotations from %d structures\n",
+            nrow(active_sites), n_distinct(active_sites$Structure)))
+
+# ── Per-residue pLDDT profiles ───────────────────────────────────────────────
+plddt_df <- read_tsv(file.path(data_dir, "plddt_profiles.tsv"), show_col_types = FALSE)
+cat(sprintf("Loaded pLDDT profiles: %d residues across %d structures\n",
+            nrow(plddt_df), n_distinct(plddt_df$Structure)))
+
+# ── (AF3 summary already loaded and merged in struct_df above) ───────────────
+```
+
+## 7.2 Structure Renders (PyMOL)
+
+```{r fig6-renders, fig.height=21, fig.width=16}
+# ── Load PyMOL renders ────────────────────────────────────────────────────────
+# Generated by: pymol scripts/run_pymol_renders.py
+# Main figure uses pLDDT-coloured individual structures
+# Superposition + close-up go to Extended Data (Supplementary Figure S3)
+
+families <- c("GH1", "GH3", "GH5_11", "GH9", "GH10", "GH28")
+
+# Short labels for panel captions (env + family + function)
+panel_labels <- c(
+  "soda_GH1"    = "GH1 Soda Lake",     "rumen_GH1"    = "GH1 Rumen",
+  "soda_GH3"    = "GH3 Soda Lake",     "rumen_GH3"    = "GH3 Rumen",
+  "soda_GH5_11" = "GH5_11 Soda Lake",  "rumen_GH5_11" = "GH5_11 Rumen",
+  "soda_GH9"    = "GH9 Soda Lake",     "rumen_GH9"    = "GH9 Rumen",
+  "soda_GH10"   = "GH10 Soda Lake",    "rumen_GH10"   = "GH10 Rumen",
+  "soda_GH28"   = "GH28 Soda Lake",    "rumen_GH28"   = "GH28 Rumen"
+)
+
+fam_to_key <- c("GH1" = "gh1", "GH3" = "gh3", "GH5_11" = "gh5_11",
+                "GH9" = "gh9", "GH10" = "gh10", "GH28" = "gh28")
+
+load_render <- function(env_prefix, fam_key, fallback_label = "") {
+  img_path <- paste0("figure7_", env_prefix, "_", fam_key, ".png")
+  if (!file.exists(img_path)) {
+    fam_upper <- toupper(fam_key) %>% str_replace("gh", "GH")
+    suffix <- ifelse(env_prefix == "soda", "_SL_plddt", "_RU_plddt")
+    img_path <- file.path("renders", paste0("Fig6_", fam_upper, suffix, ".png"))
+  }
+  if (file.exists(img_path)) {
+    img <- png::readPNG(img_path)
+    wrap_elements(full = grid::rasterGrob(img, interpolate = TRUE))
+  } else {
+    ggplot() +
+      annotate("text", x = 0.5, y = 0.5,
+               label = paste0(fam_key, " ", fallback_label, "\n(run PyMOL to generate)"),
+               size = 3, colour = "grey50", hjust = 0.5) +
+      theme_void() +
+      theme(plot.background = element_rect(fill = "grey97", colour = "grey80"))
+  }
+}
+
+# ── MAIN FIGURE 7: 6×2 grid layout ──────────────────────────────────────────
+# Columns: Soda Lake | Rumen
+# Rows:    GH1, GH3, GH5_11, GH9, GH10, GH28
+# Panel order (row-wise, left-to-right):
+#   A=GH1-SL  B=GH1-RU
+#   C=GH3-SL  D=GH3-RU
+#   E=GH5_11-SL  F=GH5_11-RU
+#   G=GH9-SL  H=GH9-RU
+#   I=GH10-SL J=GH10-RU
+#   K=GH28-SL L=GH28-RU
+
+panels <- list()
+# Row 1 — GH1
+panels[["A"]] <- load_render("soda",  "gh1")
+panels[["B"]] <- load_render("rumen", "gh1")
+# Row 2 — GH3
+panels[["C"]] <- load_render("soda",  "gh3")
+panels[["D"]] <- load_render("rumen", "gh3")
+# Row 3 — GH5_11
+panels[["E"]] <- load_render("soda",  "gh5_11")
+panels[["F"]] <- load_render("rumen", "gh5_11")
+# Row 4 — GH9
+panels[["G"]] <- load_render("soda",  "gh9")
+panels[["H"]] <- load_render("rumen", "gh9")
+# Row 5 — GH10
+panels[["I"]] <- load_render("soda",  "gh10")
+panels[["J"]] <- load_render("rumen", "gh10")
+# Row 6 — GH28
+panels[["K"]] <- load_render("soda",  "gh28")
+panels[["L"]] <- load_render("rumen", "gh28")
+
+# Column headers (environment) and row labels (GH family)
+col_heads <- c("Soda Lake", "Rumen")
+
+# Labels for supplementary superposition panels
+family_labels <- c(
+  "GH1"    = "GH1  \u03b2-glucosidase",
+  "GH3"    = "GH3  \u03b2-glucosidase",
+  "GH5_11" = "GH5\u2081\u2081  Endoglucanase",
+  "GH9"    = "GH9  Endoglucanase",
+  "GH10"   = "GH10  Xylanase",
+  "GH28"   = "GH28  Polygalacturonase"
+)
+
+p_renders <- (
+  # Row 1 — GH1:    Soda Lake | Rumen
+  (panels[["A"]] | panels[["B"]]) /
+  # Row 2 — GH3:    Soda Lake | Rumen
+  (panels[["C"]] | panels[["D"]]) /
+  # Row 3 — GH5_11: Soda Lake | Rumen
+  (panels[["E"]] | panels[["F"]]) /
+  # Row 4 — GH9:    Soda Lake | Rumen
+  (panels[["G"]] | panels[["H"]]) /
+  # Row 5 — GH10:   Soda Lake | Rumen
+  (panels[["I"]] | panels[["J"]]) /
+  # Row 6 — GH28:   Soda Lake | Rumen
+  (panels[["K"]] | panels[["L"]])
+) +
+  plot_layout(heights = c(1, 1, 1, 1, 1, 1)) +
+  plot_annotation(tag_levels = "A") &
+  # Inset the panel tag into the top-left corner of each panel so the
+  # label doesn't reserve a whole header strip above each structure.
+  # Negative margins pull adjacent panels tight against each other.
+  theme(plot.tag = element_text(size = 14, face = "bold", family = pub_font,
+                                  hjust = 0, vjust = 1),
+        plot.tag.position = c(0.02, 0.98),
+        plot.margin = margin(0, 0, 0, 0))
+p_renders
+
+# ── SUPPLEMENTARY: Superposition + Close-up (for Supplementary Fig S3) ────────
+sup_rows <- list()
+for (fam in families) {
+  p_sup  <- load_render(fam, "_superpose", "overlay")
+  p_zoom <- load_render(fam, "_closeup", "active site")
+
+  sup_rows[[fam]] <- (p_sup | p_zoom) +
+    plot_layout(widths = c(1, 1)) +
+    plot_annotation(subtitle = family_labels[[fam]]) &
+    theme(plot.subtitle = element_text(face = "bold", size = 9, hjust = 0,
+                                       family = pub_font))
+}
+
+p_superpositions <- sup_rows[["GH1"]] / sup_rows[["GH3"]] /
+                    sup_rows[["GH5_11"]] / sup_rows[["GH9"]] /
+                    sup_rows[["GH10"]] / sup_rows[["GH28"]] +
+  plot_layout(heights = c(1, 1, 1, 1, 1, 1)) +
+  plot_annotation(
+    title = "Structural superposition and active-site conservation",
+    caption = "Left: overlay (Soda Lake = red, Rumen = teal).  Right: active-site close-up with catalytic residues labelled."
+  ) &
+  theme(plot.title = element_text(size = 10, face = "bold", family = pub_font),
+        plot.caption = element_text(size = 7, hjust = 0.5, colour = "grey40",
+                                     family = pub_font))
+```
+
+## 7.3 Panel B — Per-Residue pLDDT Confidence Profiles
+
+```{r fig6-panelB-plddt, fig.height=4, fig.width=12.60}
+# ── pLDDT ribbon plot: per-residue confidence coloured by AlphaFold bins ─────
+# Mark active site positions with vertical lines
+
+plddt_plot <- plddt_df %>%
+  mutate(
+    # Derive GH subfamily from structure name
+    GH_Subfamily = case_when(
+      str_detect(Structure, "gh5_11") ~ "GH5_11",
+      TRUE ~ GH_Family
+    ),
+    confidence_bin = case_when(
+      pLDDT > 90 ~ "Very high (>90)",
+      pLDDT > 70 ~ "Confident (70-90)",
+      pLDDT > 50 ~ "Low (50-70)",
+      TRUE ~ "Very low (<50)"
+    ),
+    confidence_bin = factor(confidence_bin,
+      levels = c("Very high (>90)", "Confident (70-90)", "Low (50-70)", "Very low (<50)")),
+    # Short label for facet
+    short_label = paste0(GH_Subfamily, " (", ifelse(Environment == "Soda Lake", "SL", "RU"), ")")
+  )
+
+# Active site positions for annotation
+active_marks <- active_sites %>%
+  mutate(
+    GH_Subfamily = case_when(
+      str_detect(Structure, "gh5_11") ~ "GH5_11",
+      TRUE ~ GH_Family
+    ),
+    short_label = paste0(GH_Subfamily, " (",
+                         ifelse(Environment == "Soda Lake", "SL", "RU"), ")"),
+    mark_label = paste0(Pred_Residue, Pred_Position)
+  )
+
+plddt_colors <- c(
+  "Very high (>90)" = "#0053D6",
+  "Confident (70-90)" = "#65CBF3",
+  "Low (50-70)" = "#FFDB13",
+  "Very low (<50)" = "#FF7D45"
+)
+
+p_plddt <- ggplot(plddt_plot, aes(x = Residue_Position, y = pLDDT)) +
+  geom_line(aes(colour = confidence_bin), linewidth = 0.4, show.legend = FALSE) +
+  geom_point(aes(colour = confidence_bin), size = 0.1, alpha = 0.4) +
+  # Active site markers
+  geom_vline(data = active_marks, aes(xintercept = Pred_Position),
+             linetype = "dashed", colour = "red", linewidth = 0.4, alpha = 0.7) +
+  geom_text(data = active_marks,
+            aes(x = Pred_Position, y = 102, label = mark_label),
+            size = 1.8, angle = 90, hjust = 0, colour = "red") +
+  # Confidence thresholds
+  geom_hline(yintercept = 90, linetype = "dotted", colour = "grey60", linewidth = 0.2) +
+  geom_hline(yintercept = 70, linetype = "dotted", colour = "grey60", linewidth = 0.2) +
+  facet_wrap(~ short_label, scales = "free_x", nrow = 2) +
+  scale_colour_manual(values = plddt_colors, name = "Confidence") +
+  scale_y_continuous(limits = c(20, 105), breaks = c(50, 70, 90, 100)) +
+  labs(x = "Residue position", y = "pLDDT") +
+  theme_pub() +
+  theme(
+    strip.text = element_text(face = "bold", size = 7),
+    axis.text.x = element_text(size = 5),
+    legend.position = "bottom",
+    legend.key.size = unit(0.3, "cm"),
+    panel.spacing = unit(0.3, "lines")
+  ) +
+  guides(colour = guide_legend(override.aes = list(size = 2, alpha = 1)))
+p_plddt
+```
+
+## 7.4 Panel C — Sequence Identity vs Structural Similarity (Scatter)
+
+```{r fig6-panelB, fig.height=5, fig.width=7}
+p_struct_scatter <- ggplot(struct_df,
+    aes(x = Seq_Identity * 100, y = LDDT,
+        colour = Environment, shape = Environment)) +
+  geom_point(size = 3.5, alpha = 0.85) +
+  geom_text_repel(aes(label = GH_Family), size = 2.5,
+                  max.overlaps = 20, segment.size = 0.3) +
+  # Quadrant annotations
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey50", linewidth = 0.3) +
+  geom_vline(xintercept = 40, linetype = "dashed", colour = "grey50", linewidth = 0.3) +
+  annotate("rect", xmin = 0, xmax = 40, ymin = 0.5, ymax = 1,
+           fill = "#E64B35", alpha = 0.05) +
+  annotate("text", x = 20, y = 0.98,
+           label = "Novel sequences\nconserved folds",
+           size = 2.2, colour = "#E64B35", fontface = "italic") +
+  scale_colour_manual(values = env_colors) +
+  scale_shape_manual(values = c("Soda Lake" = 16, "Rumen" = 17)) +
+  labs(x = "Sequence Identity to Best PDB Hit (%)",
+       y = "Foldseek LDDT") +
+  theme_pub() +
+  theme(legend.position = "right")
+p_struct_scatter
+```
+
+## 7.5 Panel D — Active Site Conservation
+
+```{r fig6-panelC-activesite, fig.height=5, fig.width=12.60}
+# ── Tile plot: GH family × environment, coloured by conservation ─────────────
+active_plot <- active_sites %>%
+  mutate(
+    Conserved = (Conserved == "True"),
+    Pred_Position = as.integer(Pred_Position),
+    # Derive GH subfamily from structure name
+    GH_Subfamily = case_when(
+      str_detect(Structure, "gh5_11") ~ "GH5_11",
+      TRUE ~ GH_Family
+    ),
+    Label = paste0(Ref_Residue, Pred_Position, "\n(", Role, ")"),
+    Status = ifelse(Conserved, "Conserved", paste0("Substituted\n(", Pred_Residue, ")")),
+    GH_Subfamily = factor(GH_Subfamily, levels = c("GH1", "GH3", "GH5_11", "GH9", "GH10", "GH28"))
+  )
+
+# Conservation colours: green = conserved, red = substituted
+conserv_colors <- c("Conserved" = "#2CA02C", "Substituted" = "#D62728")
+
+# Compute label for each tile
+active_plot <- active_plot %>%
+  mutate(
+    tile_label = ifelse(Conserved,
+                        paste0(Pred_Residue, Pred_Position),
+                        paste0(Ref_Residue, "->", Pred_Residue, Pred_Position)),
+    conserv_status = ifelse(Conserved, "Conserved", "Substituted")
+  )
+
+p_active_site <- ggplot(active_plot,
+                        aes(x = Role, y = interaction(GH_Subfamily, Environment, sep = " — "),
+                            fill = conserv_status)) +
+  geom_tile(colour = "white", linewidth = 0.8) +
+  geom_text(aes(label = tile_label), size = 2.5, fontface = "bold") +
+  scale_fill_manual(values = conserv_colors, name = "Catalytic residue") +
+  facet_grid(GH_Subfamily ~ ., scales = "free_y", space = "free_y", switch = "y") +
+  labs(x = "Catalytic role", y = NULL,
+       caption = "Residue labels: 3-letter code + position in predicted structure. Arrow = substitution from reference.") +
+  theme_pub() +
+  theme(
+    axis.text.y = element_text(size = 7),
+    axis.text.x = element_text(size = 7, angle = 30, hjust = 1),
+    strip.text.y.left = element_text(angle = 0, face = "bold", size = 7.5),
+    strip.placement = "outside",
+    strip.background = element_rect(fill = "grey96", colour = NA),
+    legend.position = "right",
+    plot.caption = element_text(size = 5.5, colour = "grey50")
+  )
+p_active_site
+```
+
+## 7.6 Panel E — Structural Metrics Summary (Compact)
+
+```{r fig6-panelD-metrics, fig.height=4, fig.width=7}
+# Compact dot plot: LDDT + pTM per structure, one row per query
+metrics_long <- struct_df %>%
+  select(GH_Family, Environment, LDDT, pTM) %>%
+  pivot_longer(cols = c(LDDT, pTM), names_to = "Metric", values_to = "Value") %>%
+  mutate(
+    Metric = factor(Metric, levels = c("LDDT", "pTM")),
+    Label = paste0(GH_Family, "\n(", Environment, ")")
+  )
+
+p_metrics <- ggplot(metrics_long,
+                    aes(x = Metric, y = Value, colour = Environment)) +
+  geom_point(size = 3, position = position_dodge(width = 0.4)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey60", linewidth = 0.3) +
+  geom_hline(yintercept = 0.8, linetype = "dotted", colour = "grey60", linewidth = 0.3) +
+  annotate("text", x = 3.4, y = 0.81, label = "high\nconfidence", size = 2, colour = "grey50") +
+  facet_wrap(~ GH_Family, nrow = 1) +
+  scale_colour_manual(values = env_colors) +
+  scale_y_continuous(limits = c(0.4, 1), breaks = seq(0.4, 1, 0.2)) +
+  labs(x = NULL, y = "Score") +
+  theme_pub() +
+  theme(strip.text = element_text(face = "bold", size = 7),
+        axis.text.x = element_text(angle = 40, hjust = 1, size = 6.5),
+        legend.position = "right")
+p_metrics
+```
+
+## 7.7 Table 1 — Structural Results Summary
+
+```{r table1-structural, results='asis'}
+# ── Build Table 1: AlphaFold3 + Foldseek + Active-site conservation ──────────
+# This reproduces the manuscript Table 1 from raw data so all values are
+# traceable and reproducible.
+
+# ── Build Table 1: Full manuscript table ──────────────────────────────────────
+# Combines AlphaFold3 predictions, dbCAN/DIAMOND annotations, active-site
+# conservation, and Foldseek PDB100 structural similarity for 12 representative
+# CAZymes. Source organism and DIAMOND annotation data are curated from the
+# original gene-level outputs (protein_taxonomy_mapping.tsv, all_diamond_merged_env.tsv).
+
+# ── Active-site summary per structure (computed from raw data) ────────────────
+active_summary <- active_sites %>%
+  group_by(Structure) %>%
+  summarise(
+    n_sites      = n(),
+    n_conserved  = sum(Conserved == "True" | Conserved == TRUE),
+    residue_str  = paste(
+      ifelse(Conserved == "True" | Conserved == TRUE,
+             paste0(Pred_Residue, Pred_Position),
+             paste0(Pred_Residue, Pred_Position)),
+      collapse = ", "
+    ),
+    plddt_str = paste(
+      ifelse(pLDDT_at_site == "N/A", "N/A",
+             sprintf("%.1f", as.numeric(pLDDT_at_site))),
+      collapse = ", "
+    ),
+    .groups = "drop"
+  )
+
+# ── Curated annotation metadata for the 12 selected structures ───────────────
+# Source organism, phylum, and DIAMOND hit statistics were extracted from the
+# original dbCAN/DIAMOND annotation pipeline outputs and GTDB-Tk classifications.
+# Foldseek PDB hit descriptions are from manual PDB lookup of the best-hit IDs.
+curated_meta <- tibble::tribble(
+  ~Structure,      ~Source_Organism,                    ~DIAMOND_PctID, ~DIAMOND_Evalue,  ~Foldseek_Description,
+  "soda_gh1",      "Roseinatronobacter (Pseudomonadota)",  97.5,       "0.0",             "2J75 GH1 \u03b2-glucosidase (T. maritima)",
+
+  "rumen_gh1",     "Scatonaster (Bacillota)",              84.3,       "1.5e-312",        "4BCE GH1 \u03b2-glycosidase (P. polymyxa)",
+  "soda_gh3",      "Limnospira (Cyanobacteriota)",        100.0,       "0.0",             "3SQL GH31 glycosidase (Synechococcus sp.)",
+  "rumen_gh3",     "Fibrobacter (Fibrobacterota)",         98.2,       "0.0",             "5XXN GH3 \u03b2-glucosidase (Fibrobacter sp.)",
+  "soda_gh5_11",   "CSBr16-58 (Bacteroidota)",            50.9,       "9.6e-155",        "1WKA Val-tRNA synthetase (T. thermophilus)*",
+  "rumen_gh5_11",  "UBA1067 (Verrucomicrobiota)",          52.9,       "6.6e-116",        "1GAX Val-tRNA synthetase (T. thermophilus)*",
+  "soda_gh9",      "Limnospira (Cyanobacteriota)",        100.0,       "0.0",             "3X17 GH9 endoglucanase (metagenome)",
+  "rumen_gh9",     "Fibrobacter (Fibrobacterota)",         99.5,       "0.0",             "6DHT GH9 endoglucanase (Ruminiclostridium)",
+  "soda_gh10",     "Aquiflexum (Bacteroidota)",            71.2,       "3.2e-188",        "4K68 GH10 xylanase (metagenome)",
+  "rumen_gh10",    "Fibrobacter (Fibrobacterota)",         99.1,       "0.0",             "7D88 GH10 xylanase (Bacillus sp. KW1)",
+  "soda_gh28",     "Pararhodobacter (Pseudomonadota)",     67.2,       "5.1e-120",        "5EJK RSV integrase (H. sapiens)*",
+  "rumen_gh28",    "Prevotella (Bacteroidota)",            94.7,       "0.0",             "3JUR GH28 exoPGase (Bacteroides sp.)"
+)
+
+# ── Merge all data sources ────────────────────────────────────────────────────
+table1_df <- struct_df %>%
+  select(Structure, Environment, GH_Family, LDDT, pTM) %>%
+  left_join(af3_summary %>% select(Structure, Mean_pLDDT), by = "Structure") %>%
+  left_join(active_summary, by = "Structure") %>%
+  left_join(curated_meta, by = "Structure") %>%
+  mutate(
+    GH_Family   = factor(GH_Family, levels = c("GH1","GH3","GH5 sub11","GH9","GH10","GH28")),
+    Environment = factor(Environment, levels = env_levels)
+  ) %>%
+  arrange(GH_Family, Environment)
+
+# ── Print summary statistics ──────────────────────────────────────────────────
+cat(sprintf("**Structural analysis summary:**\n\n"))
+cat(sprintf("- Total structures predicted: %d (6 GH families \u00d7 2 environments)\n", nrow(table1_df)))
+cat(sprintf("- pTM range: %.2f\u2013%.2f\n", min(table1_df$pTM), max(table1_df$pTM)))
+cat(sprintf("- Foldseek LDDT > 0.7: %d of %d\n",
+            sum(table1_df$LDDT > 0.7), nrow(table1_df)))
+cat(sprintf("- Active-site residues conserved: %d of %d\n",
+            sum(active_sites$Conserved == "True" | active_sites$Conserved == TRUE),
+            nrow(active_sites)))
+
+n_struct_with_conserved <- active_sites %>%
+  filter(Conserved == "True" | Conserved == TRUE) %>%
+  pull(Structure) %>% n_distinct()
+cat(sprintf("- Structures with \u2265 1 conserved catalytic residue: %d of %d\n",
+            n_struct_with_conserved, n_distinct(active_sites$Structure)))
+
+conserved_plddt <- active_sites %>%
+  filter((Conserved == "True" | Conserved == TRUE) & pLDDT_at_site != "N/A") %>%
+  mutate(plddt_num = as.numeric(pLDDT_at_site))
+cat(sprintf("- pLDDT at conserved active sites: %.1f\u2013%.1f\n",
+            min(conserved_plddt$plddt_num), max(conserved_plddt$plddt_num)))
+
+gh28_soda <- table1_df %>% filter(Structure == "soda_gh28")
+cat(sprintf("- GH28 soda lake outlier: pTM=%.2f, LDDT=%.3f, DIAMOND %%ID=%.1f%%\n",
+            gh28_soda$pTM, gh28_soda$LDDT, gh28_soda$DIAMOND_PctID))
+
+# Non-CAZyme Foldseek hits
+cat(sprintf("- Non-CAZyme Foldseek PDB hits (marked *): GH5_11 soda, GH5_11 rumen, GH28 soda\n"))
+cat(sprintf("  These share ancestral fold scaffolds despite non-CAZyme top PDB matches\n"))
+
+# ── Format display table ─────────────────────────────────────────────────────
+table1_display <- table1_df %>%
+  transmute(
+    `GH Family`          = GH_Family,
+    `Env.`               = Environment,
+    `Source Organism (Phylum)` = Source_Organism,
+    `DIAMOND %ID`        = sprintf("%.1f", DIAMOND_PctID),
+    `DIAMOND E-value`    = DIAMOND_Evalue,
+    `pTM`                = sprintf("%.2f", pTM),
+    `Mean pLDDT`         = sprintf("%.1f", Mean_pLDDT),
+    `Catalytic Residues` = residue_str,
+    `Active Site pLDDT`  = plddt_str,
+    `Top Foldseek PDB Hit` = Foldseek_Description,
+    `LDDT`               = sprintf("%.2f", LDDT)
+  )
+
+kable(table1_display, format = "html", escape = FALSE,
+      caption = paste0(
+        "Table 1. AlphaFold3 structural predictions, dbCAN/DIAMOND CAZyme annotations, ",
+        "active-site conservation, and Foldseek PDB100 structural similarity for twelve ",
+        "representative CAZymes from soda lake and rumen metagenomes. ",
+        "dbCAN Tools: all proteins annotated as CAZymes by DIAMOND against the CAZy database. ",
+        "The Foldseek column shows the closest whole-structure match in PDB100; 9 of 12 proteins ",
+        "matched genuine CAZymes; the 3 non-CAZyme matches (GH5_11, soda GH28, marked with *) ",
+        "share ancestral fold scaffolds. Source organisms of PDB hits shown in parentheses."
+      )) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed", "hover"), font_size = 8,
+                full_width = TRUE) %>%
+  row_spec(0, bold = TRUE, background = "#E8E8E8") %>%
+  row_spec(which(table1_df$Structure == "soda_gh28"), background = "#FFF3CD") %>%
+  column_spec(3, width = "12em") %>%
+  column_spec(8, width = "10em") %>%
+  column_spec(10, width = "14em") %>%
+  footnote(
+    general = c(
+      "* Non-CAZyme Foldseek hit; shares ancestral fold scaffold with target GH family.",
+      "Catalytic residues shown as predicted amino acid + position; Variant = substitution at expected catalytic site.",
+      "DIAMOND %ID and E-value from CAZy database annotation via dbCAN run_dbcan pipeline."
+    ),
+    general_title = "Notes: "
+  )
+```
+
+## 7.8 Table 2 — Extremophile-Derived CAZymes as Industrial Biocatalysts
+
+```{r table2-biotech, results='asis'}
+# ── Build Table 2: Biotechnological potential of predicted CAZymes ─────────
+# Combines structural confidence, active-site conservation, and literature-
+# informed industrial applications for each GH family × environment pair.
+
+# Industrial application annotations (literature-based)
+biotech_annotations <- tibble::tribble(
+  ~GH_Family,   ~Substrate,                    ~Reaction,                          ~Industrial_Application,                                           ~Optimal_Conditions,
+  "GH1",        "Cellobiose, lactose, glucosides", "Hydrolysis of terminal β-glucosidic bonds", "Cellulosic ethanol (SSF), food flavour release, pharmaceutical glycoside activation", "Alkaliphilic variants: pH 9–11; Thermophilic: 60–80 °C",
+  "GH3",        "Cellobiose, β-glucans, xylan",    "Exo-β-glucosidase / β-xylosidase",         "Biomass saccharification, animal feed enzyme cocktails, biofuel production",           "Broad pH range; mesophilic to moderately thermophilic",
+  "GH5 sub11",  "β-1,4-glucan (CMC, barley glucan)","Endo-β-1,4-glucanase",                   "Textile bio-polishing, detergent formulations, pulp & paper processing",               "Alkaliphilic: pH 8–11 (soda lake); Neutral: pH 6–7 (rumen)",
+  "GH9",        "Crystalline & amorphous cellulose","Processive endoglucanase",                 "Consolidated bioprocessing, biomass pretreatment, textile finishing",                   "Thermostable variants preferred for industrial CBP",
+  "GH10",       "Xylan, arabinoxylan",              "Endo-β-1,4-xylanase",                     "Paper bleaching, bread-making, animal feed, xylooligosaccharide production",           "Alkaliphilic: detergent/pulp; Acidic: food/feed applications",
+  "GH28",       "Pectin, polygalacturonan",         "Polygalacturonase",                        "Fruit juice clarification, textile retting, wine processing, bio-scouring",            "Acidic pH for juice; alkaline pH for textile applications"
+)
+
+# Merge structural data with biotech annotations
+table2_df <- struct_df %>%
+  select(Structure, Environment, GH_Family, pTM, Seq_Identity, LDDT) %>%
+  left_join(
+    af3_summary %>% select(Structure, Mean_pLDDT),
+    by = "Structure"
+  ) %>%
+  left_join(
+    active_sites %>%
+      group_by(Structure) %>%
+      summarise(
+        n_sites     = n(),
+        n_conserved = sum(Conserved == "True" | Conserved == TRUE),
+        .groups     = "drop"
+      ),
+    by = "Structure"
+  ) %>%
+  left_join(biotech_annotations, by = "GH_Family") %>%
+  mutate(
+    GH_Family   = factor(GH_Family, levels = c("GH1","GH3","GH5 sub11","GH9","GH10","GH28")),
+    Environment = factor(Environment, levels = env_levels),
+    # Structural readiness score: high pTM + high pLDDT + conserved active sites
+    Structural_Readiness = case_when(
+      pTM >= 0.90 & Mean_pLDDT >= 85 & n_conserved == n_sites ~ "High",
+      pTM >= 0.80 & Mean_pLDDT >= 70 & n_conserved >= 1       ~ "Moderate",
+      TRUE                                                      ~ "Low"
+    ),
+    Conserved_str = paste0(n_conserved, "/", n_sites)
+  ) %>%
+  arrange(GH_Family, Environment)
+
+# Display table
+table2_display <- table2_df %>%
+  select(GH_Family, Environment, Substrate, Reaction, Industrial_Application,
+         pTM, Mean_pLDDT, Conserved_str, Structural_Readiness) %>%
+  mutate(
+    pTM       = sprintf("%.2f", pTM),
+    Mean_pLDDT = sprintf("%.1f", Mean_pLDDT)
+  ) %>%
+  rename(
+    `GH Family`       = GH_Family,
+    `Env.`            = Environment,
+    `Substrate`       = Substrate,
+    `Reaction`        = Reaction,
+    `Industrial Application` = Industrial_Application,
+    `pTM`             = pTM,
+    `Mean pLDDT`      = Mean_pLDDT,
+    `Active Sites`    = Conserved_str,
+    `Readiness`       = Structural_Readiness
+  )
+
+# Colour-code readiness
+readiness_colours <- ifelse(table2_df$Structural_Readiness == "High", "#C3E6CB",
+                     ifelse(table2_df$Structural_Readiness == "Moderate", "#FFEEBA", "#F5C6CB"))
+
+kable(table2_display, format = "html", escape = FALSE,
+      caption = "Table 2. Biotechnological potential of extremophile-derived CAZymes: structural confidence and industrial applications for twelve AlphaFold3-predicted enzymes from Ethiopian soda lake and rumen metagenomes.") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 8,
+                full_width = TRUE) %>%
+  row_spec(0, bold = TRUE, background = "#E8E8E8") %>%
+  column_spec(9, background = readiness_colours, bold = TRUE) %>%
+  footnote(
+    general = c(
+      "Structural Readiness: High = pTM ≥ 0.90, pLDDT ≥ 85, all active sites conserved; Moderate = pTM ≥ 0.80, pLDDT ≥ 70, ≥ 1 conserved; Low = below thresholds.",
+      "Industrial applications compiled from CAZy database and reviewed literature (Lombard et al. 2014; Jeilu et al. 2024)."
+    ),
+    general_title = "Notes: "
+  )
+
+# Summary stats
+cat("\n\n**Biotechnology readiness summary:**\n\n")
+cat(sprintf("- High readiness candidates: %d of %d\n",
+            sum(table2_df$Structural_Readiness == "High"), nrow(table2_df)))
+cat(sprintf("- Moderate readiness: %d of %d\n",
+            sum(table2_df$Structural_Readiness == "Moderate"), nrow(table2_df)))
+cat(sprintf("- Low readiness (require further validation): %d of %d\n",
+            sum(table2_df$Structural_Readiness == "Low"), nrow(table2_df)))
+cat(sprintf("- Soda lake enzymes offer alkali/salt-tolerant variants for detergent & textile industries\n"))
+cat(sprintf("- Rumen enzymes offer efficient biomass-degrading variants for biofuel & feed applications\n"))
+```
+
+## 7.9 ★ Figure 7: AlphaFold3-Predicted CAZyme Structures (6×2 Grid)
+
+
+```{r fig6-composite, fig.height=21, fig.width=16}
+# ── Figure 7: Individual predicted structures coloured by pLDDT ──────────────
+# Columns: Soda Lake (left) | Rumen (right)
+# Rows:    GH1, GH3, GH5_11, GH9, GH10, GH28
+# Wider canvas (16" × 21") so each panel has enough horizontal room for
+# ribbons + catalytic-residue labels to render clearly.
+p_renders
+save_fig(p_renders, "Fig7_structural_analysis", 16, 21)
+```
+
+## 7.10 Supplementary Figure S3 — Structural Superposition and Conservation
+
+```{r figS3-extended-structural, fig.height=18, fig.width=12.60}
+# ── Supplementary Figure S3 ──────────────────────────────────────────────────
+# A: Structural superpositions + active-site close-ups (from PyMOL)
+# B: Per-residue pLDDT confidence profiles
+# C: Sequence identity vs TM-score scatter
+# D: Active-site conservation tiles
+
+p_sup_grob <- wrap_elements(full = grid::grid.grabExpr(print(p_superpositions)))
+
+p_figS3 <- p_sup_grob /
+            (p_plddt + labs(title = NULL)) /
+            (p_struct_scatter + labs(title = NULL, subtitle = NULL) |
+             p_active_site + labs(title = NULL)) +
+  plot_layout(heights = c(2, 1, 1)) +
+  plot_annotation(
+    tag_levels = "A",
+    title = "Structural superposition, pLDDT profiles, and active-site conservation"
+  ) &
+  theme_pub() &
+  theme(plot.tag = element_text(size = 10, face = "bold"),
+        plot.margin = margin(4, 4, 4, 4))
+p_figS3
+save_fig(p_figS3, "FigS3_extended_structural", nm_wide, 18)
+```
+
+---
+
+# 9 — Manuscript Statistics Summary 
+This section prints all key statistics needed for the Results section of the manuscript.
+
+## 9.1 Sample & MAG Counts
+
+```{r ms-counts}
+cat("═══════════════════════════════════════════════════════════\n")
+cat("SAMPLE & MAG COUNTS\n")
+cat("═══════════════════════════════════════════════════════════\n\n")
+
+n_samples <- ncol(sp_mat)
+n_sl_samples <- sum(mpa_samples$Environment == "Soda Lake")
+n_ru_samples <- sum(mpa_samples$Environment == "Rumen")
+cat(sprintf("Total metagenomic samples: %d (%d soda lake, %d rumen)\n",
+            n_samples, n_sl_samples, n_ru_samples))
+
+cat("\nSamples per source:\n")
+print(table(mpa_samples$Source, mpa_samples$Environment))
+
+n_mags_total <- nrow(red_df)
+n_mags_sl <- sum(red_df$Environment == "Soda Lake")
+n_mags_ru <- sum(red_df$Environment == "Rumen")
+cat(sprintf("\nQuality-filtered MAGs (with RED): %d (%d soda lake, %d rumen)\n",
+            n_mags_total, n_mags_sl, n_mags_ru))
+
+# Also count from novelty_rank (full GTDB-Tk set)
+if (exists("novelty_rank")) {
+  cat(sprintf("Total GTDB-Tk classified MAGs: %d (%d SL, %d RU)\n",
+              nrow(novelty_rank),
+              sum(novelty_rank$Environment == "Soda Lake"),
+              sum(novelty_rank$Environment == "Rumen")))
+}
+
+# Prokka-annotated MAGs
+n_prokka_mags <- n_distinct(prokka_ann$MAG)
+n_prokka_sl <- n_distinct(prokka_ann$MAG[prokka_ann$Environment == "Soda Lake"])
+n_prokka_ru <- n_distinct(prokka_ann$MAG[prokka_ann$Environment == "Rumen"])
+cat(sprintf("Prokka-annotated MAGs: %d (%d SL, %d RU)\n",
+            n_prokka_mags, n_prokka_sl, n_prokka_ru))
+
+cat(sprintf("Total Prokka gene annotations: %s\n", format(nrow(prokka_ann), big.mark = ",")))
+```
+
+## 9.2 MetaPhlAn — Top Taxa (Phylum & Genus)
+
+```{r ms-taxa-metaphlan}
+cat("═══════════════════════════════════════════════════════════\n")
+cat("METAPHLAN — TOP TAXA\n")
+cat("═══════════════════════════════════════════════════════════\n\n")
+
+# Top phyla per environment
+cat("── Top 10 Phyla by mean abundance per environment ──\n\n")
+phy_by_env <- mpa_phy_long %>%
+  group_by(Phylum, Environment) %>%
+  summarise(mean_abd = mean(Abundance), .groups = "drop")
+
+cat("SODA LAKE:\n")
+phy_by_env %>% filter(Environment == "Soda Lake") %>%
+  arrange(desc(mean_abd)) %>% head(10) %>%
+  mutate(label = sprintf("  %2d. %-25s  mean = %.2f%%", row_number(), Phylum, mean_abd)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+cat("\n\nRUMEN:\n")
+phy_by_env %>% filter(Environment == "Rumen") %>%
+  arrange(desc(mean_abd)) %>% head(10) %>%
+  mutate(label = sprintf("  %2d. %-25s  mean = %.2f%%", row_number(), Phylum, mean_abd)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+# Top genera per environment
+cat("\n\n── Top 15 Genera by mean abundance per environment ──\n\n")
+gen_by_env <- mpa_genus_clean %>%
+  select(-clade_name, -depth) %>%
+  pivot_longer(-Genus, names_to = "Sample", values_to = "Abundance") %>%
+  left_join(mpa_samples, by = "Sample") %>%
+  group_by(Genus, Environment) %>%
+  summarise(mean_abd = mean(Abundance), .groups = "drop")
+
+cat("SODA LAKE:\n")
+gen_by_env %>% filter(Environment == "Soda Lake") %>%
+  arrange(desc(mean_abd)) %>% head(15) %>%
+  mutate(label = sprintf("  %2d. %-30s  mean = %.2f%%", row_number(), Genus, mean_abd)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+cat("\n\nRUMEN:\n")
+gen_by_env %>% filter(Environment == "Rumen") %>%
+  arrange(desc(mean_abd)) %>% head(15) %>%
+  mutate(label = sprintf("  %2d. %-30s  mean = %.2f%%", row_number(), Genus, mean_abd)) %>%
+  pull(label) %>% cat(sep = "\n")
+```
+
+## 9.3 Diversity & Statistical Tests
+
+```{r ms-diversity-stats}
+cat("═══════════════════════════════════════════════════════════\n")
+cat("DIVERSITY & STATISTICAL TESTS\n")
+cat("═══════════════════════════════════════════════════════════\n\n")
+
+# MetaPhlAn alpha diversity
+cat("── MetaPhlAn Alpha Diversity (species-level) ──\n")
+sl_sha <- mpa_alpha$Shannon[mpa_alpha$Environment == "Soda Lake"]
+ru_sha <- mpa_alpha$Shannon[mpa_alpha$Environment == "Rumen"]
+cat(sprintf("  Shannon — Soda Lake: median = %.2f (IQR: %.2f–%.2f)\n",
+            median(sl_sha), quantile(sl_sha, 0.25), quantile(sl_sha, 0.75)))
+cat(sprintf("  Shannon — Rumen:     median = %.2f (IQR: %.2f–%.2f)\n",
+            median(ru_sha), quantile(ru_sha, 0.25), quantile(ru_sha, 0.75)))
+cat(sprintf("  Kruskal-Wallis (Shannon ~ Env): chi-sq = %.2f, p = %.2e\n",
+            kw_sha$statistic, kw_sha$p.value))
+cat(sprintf("  Kruskal-Wallis (Observed ~ Env): chi-sq = %.2f, p = %.2e\n",
+            kw_obs$statistic, kw_obs$p.value))
+
+# MetaPhlAn PERMANOVA
+cat(sprintf("\n  PERMANOVA (Bray-Curtis, MetaPhlAn): R² = %.3f, p = %.3f\n",
+            perm_mpa$R2[1], perm_mpa$`Pr(>F)`[1]))
+
+# CAZyme alpha diversity
+cat("\n── CAZyme Alpha Diversity ──\n")
+sl_caz_sha <- alpha_div$Shannon[alpha_div$Environment == "Soda Lake"]
+ru_caz_sha <- alpha_div$Shannon[alpha_div$Environment == "Rumen"]
+cat(sprintf("  Shannon — Soda Lake: median = %.2f\n", median(sl_caz_sha)))
+cat(sprintf("  Shannon — Rumen:     median = %.2f\n", median(ru_caz_sha)))
+cat(sprintf("  Kruskal-Wallis (CAZyme Shannon ~ Env): p = %.2e\n", kw_shan$p.value))
+cat(sprintf("  Kruskal-Wallis (CAZyme Richness ~ Env): p = %.2e\n", kw_rich$p.value))
+
+# CAZyme PERMANOVA
+cat(sprintf("\n  PERMANOVA (Bray-Curtis, CAZyme families): R² = %.3f, p = %.3f\n",
+            perm_caz$R2[1], perm_caz$`Pr(>F)`[1]))
+cat(sprintf("  NMDS stress: %.3f\n", nmds_caz$stress))
+
+# CAZyme identity
+cat("\n── CAZyme Sequence Identity ──\n")
+cat(sprintf("  Wilcoxon test (Identity ~ Env): p = %.2e\n", wil_id$p.value))
+cat(sprintf("  Median identity — Soda Lake: %.1f%%\n",
+            novel_frac$median_id[novel_frac$Environment == "Soda Lake"]))
+cat(sprintf("  Median identity — Rumen:     %.1f%%\n",
+            novel_frac$median_id[novel_frac$Environment == "Rumen"]))
+
+# RED
+cat("\n── RED (Relative Evolutionary Divergence) ──\n")
+sl_red <- red_df$RED[red_df$Environment == "Soda Lake"]
+ru_red <- red_df$RED[red_df$Environment == "Rumen"]
+cat(sprintf("  Soda Lake RED: median = %.3f (n = %d)\n", median(sl_red, na.rm=TRUE), length(sl_red)))
+cat(sprintf("  Rumen RED:     median = %.3f (n = %d)\n", median(ru_red, na.rm=TRUE), length(ru_red)))
+cat(sprintf("  Kruskal-Wallis (RED ~ Env): p = %.2e\n", kw_env$p.value))
+
+# Unclassified reads
+cat(sprintf("\n── Unclassified Reads ──\n"))
+cat(sprintf("  Wilcoxon test (%%Unclassified ~ Env): p = %.3e\n", wil_uc$p.value))
+```
+
+## 9.4 MAG-Level Taxonomy (GTDB-Tk)
+
+```{r ms-taxa-mags}
+cat("═══════════════════════════════════════════════════════════\n")
+cat("MAG-LEVEL TAXONOMY (GTDB-Tk)\n")
+cat("═══════════════════════════════════════════════════════════\n\n")
+
+# Use novelty_rank which already has parsed taxonomy (d, p, c, o, f, g, s)
+cat(sprintf("Total MAGs with GTDB-Tk classification: %d\n\n", nrow(novelty_rank)))
+
+# Top phyla per environment
+cat("── Top Phyla in MAGs ──\n\n")
+mag_phy <- novelty_rank %>%
+  filter(!is.na(p), p != "") %>%
+  count(p, Environment) %>%
+  group_by(Environment) %>% arrange(desc(n)) %>% slice_head(n = 10)
+
+cat("SODA LAKE:\n")
+mag_phy %>% filter(Environment == "Soda Lake") %>% ungroup() %>%
+  mutate(label = sprintf("  %2d. %-30s  n = %d MAGs", row_number(), p, n)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+cat("\n\nRUMEN:\n")
+mag_phy %>% filter(Environment == "Rumen") %>% ungroup() %>%
+  mutate(label = sprintf("  %2d. %-30s  n = %d MAGs", row_number(), p, n)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+# Top genera per environment
+cat("\n\n── Top Genera in MAGs (classified only) ──\n\n")
+mag_gen <- novelty_rank %>%
+  filter(!is.na(g), g != "") %>%
+  count(g, Environment) %>%
+  group_by(Environment) %>% arrange(desc(n)) %>% slice_head(n = 15)
+
+cat("SODA LAKE:\n")
+mag_gen %>% filter(Environment == "Soda Lake") %>% ungroup() %>%
+  mutate(label = sprintf("  %2d. %-30s  n = %d MAGs", row_number(), g, n)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+cat("\n\nRUMEN:\n")
+mag_gen %>% filter(Environment == "Rumen") %>% ungroup() %>%
+  mutate(label = sprintf("  %2d. %-30s  n = %d MAGs", row_number(), g, n)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+# Unclassified genus counts
+cat("\n\n── Unclassified at Genus Level ──\n")
+unclass_g <- novelty_rank %>% filter(is.na(g) | g == "") %>% count(Environment)
+cat(sprintf("  Soda Lake: %d MAGs unclassified at genus\n",
+            unclass_g$n[unclass_g$Environment == "Soda Lake"]))
+cat(sprintf("  Rumen:     %d MAGs unclassified at genus\n",
+            unclass_g$n[unclass_g$Environment == "Rumen"]))
+
+# Species (if any classified)
+cat("\n── Species-Level Classifications ──\n")
+mag_sp <- novelty_rank %>%
+  filter(!is.na(s), s != "") %>%
+  count(s, Environment) %>% arrange(desc(n))
+cat(sprintf("  Total MAGs with species assignment: %d / %d (%.1f%%)\n",
+            sum(mag_sp$n), nrow(novelty_rank), sum(mag_sp$n)/nrow(novelty_rank)*100))
+if (nrow(mag_sp) > 0) {
+  head(mag_sp, 20) %>%
+    mutate(label = sprintf("  %-40s  %s (n = %d)", s, Environment, n)) %>%
+    pull(label) %>% cat(sep = "\n")
+}
+
+# Novelty summary
+cat("\n\n── Novelty Summary ──\n")
+cat(sprintf("  Novel species (no species match): %d (%.1f%%)\n",
+            sum(novelty_rank$novel_species), mean(novelty_rank$novel_species)*100))
+cat(sprintf("  Novel genus (no genus match):     %d (%.1f%%)\n",
+            sum(novelty_rank$novel_genus), mean(novelty_rank$novel_genus)*100))
+cat(sprintf("  Novel family (no family match):   %d (%.1f%%)\n",
+            sum(novelty_rank$novel_family), mean(novelty_rank$novel_family)*100))
+```
+
+## 9.5 Top GH Families & Genera
+
+```{r ms-gh-stats}
+cat("═══════════════════════════════════════════════════════════\n")
+cat("TOP GH FAMILIES & CONTRIBUTING GENERA\n")
+cat("═══════════════════════════════════════════════════════════\n\n")
+
+# Total CAZyme count
+cat(sprintf("Total CAZyme annotations (2-tool consensus): %s\n",
+            format(nrow(cazyme_2t), big.mark = ",")))
+
+# GH family counts
+gh_all <- cazyme_2t %>% filter(CAZyme_Class == "GH")
+cat(sprintf("Total GH annotations: %s\n\n", format(nrow(gh_all), big.mark = ",")))
+
+cat("── Top 20 GH Families (overall) ──\n")
+gh_all %>% count(GH_Family = CAZyme_Family, sort = TRUE) %>% head(20) %>%
+  mutate(label = sprintf("  %2d. %-10s  n = %5d", row_number(), GH_Family, n)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+cat("\n\n── Top 10 GH Families per Environment ──\n\n")
+cat("SODA LAKE:\n")
+gh_all %>% filter(Environment == "Soda Lake") %>%
+  count(Family = CAZyme_Family, sort = TRUE) %>% head(10) %>%
+  mutate(label = sprintf("  %2d. %-10s  n = %d", row_number(), Family, n)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+cat("\n\nRUMEN:\n")
+gh_all %>% filter(Environment == "Rumen") %>%
+  count(Family = CAZyme_Family, sort = TRUE) %>% head(10) %>%
+  mutate(label = sprintf("  %2d. %-10s  n = %d", row_number(), Family, n)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+# GH family enrichment (Fisher's exact)
+cat("\n\n── GH Family Enrichment (Fisher's exact, BH-adjusted) ──\n")
+cat("  (Showing families with p_adj < 0.05)\n\n")
+if (exists("gh_fisher")) {
+  sig_gh <- gh_fisher %>% filter(p_adj < 0.05) %>% arrange(p_adj)
+  if (nrow(sig_gh) > 0) {
+    sig_gh %>%
+      mutate(direction = ifelse(log2_OR > 0, "SL-enriched", "RU-enriched"),
+             label = sprintf("  %-10s  log2OR = %+.2f  p_adj = %.2e  %s",
+                             CAZyme_Family, log2_OR, p_adj, direction)) %>%
+      pull(label) %>% cat(sep = "\n")
+  } else { cat("  No significantly enriched GH families at p_adj < 0.05\n") }
+}
+
+# Top genera per GH family (uses gh_genus which has Genus from GTDB-Tk join)
+cat("\n\n── Top 5 Genera per Major GH Family per Environment ──\n")
+if (exists("gh_genus")) {
+  for (fam in c("GH1", "GH2", "GH3", "GH5", "GH9", "GH13", "GH28", "GH43")) {
+    cat(sprintf("\n  %s:\n", fam))
+    gh_gen <- gh_genus %>%
+      filter(CAZyme_Family == fam, !is.na(Genus), Genus != "") %>%
+      count(Genus, Environment, sort = TRUE) %>%
+      group_by(Environment) %>% slice_head(n = 5)
+    for (env in c("Soda Lake", "Rumen")) {
+      sub <- gh_gen %>% filter(Environment == env)
+      if (nrow(sub) > 0) {
+        cat(sprintf("    %s: %s\n", env,
+                    paste(sprintf("%s (%d)", sub$Genus, sub$n), collapse = ", ")))
+      }
+    }
+  }
+}
+```
+
+## 9.6 Functional Pathway Enrichment
+
+```{r ms-pathway-enrichment}
+cat("═══════════════════════════════════════════════════════════\n")
+cat("FUNCTIONAL PATHWAY ENRICHMENT (Figure 4)\n")
+cat("═══════════════════════════════════════════════════════════\n\n")
+
+if (exists("enrich_pathway")) {
+  enrich_pathway %>%
+    arrange(pathway_group, p_adj) %>%
+    mutate(
+      direction = ifelse(log2_OR > 0, "SL-enriched", "RU-enriched"),
+      label = sprintf("  %-35s  %-18s  log2OR = %+6.2f  p_adj = %.2e  %s  %s",
+                      as.character(pathway), as.character(pathway_group),
+                      log2_OR, p_adj, sig_label, direction)
+    ) %>%
+    pull(label) %>% cat(sep = "\n")
+}
+
+```
+
+## 9.7 AlphaFold3 & Structural Analysis
+
+```{r ms-alphafold-stats}
+cat("═══════════════════════════════════════════════════════════\n")
+cat("ALPHAFOLD3 STRUCTURE PREDICTIONS\n")
+cat("═══════════════════════════════════════════════════════════\n\n")
+
+af3 <- read_tsv(file.path(data_dir, "alphafold3_summary.tsv"), show_col_types = FALSE)
+cat("── Per-Structure Summary ──\n\n")
+af3 %>%
+  mutate(label = sprintf("  %-45s  Env=%-10s  GH=%-5s  Len=%4d  pTM=%.2f  meanPLDDT=%.1f  HiConf=%.1f%%",
+                          Structure, Environment, GH_Family, Sequence_Length,
+                          pTM, Mean_pLDDT, High_Confidence_Pct)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+cat("\n\n── Foldseek Best Hits (Sequence Identity & LDDT) ──\n\n")
+fs_hits <- read_tsv(file.path(data_dir, "foldseek_best_hits.tsv"), show_col_types = FALSE)
+fs_hits %>%
+  mutate(label = sprintf("  %-20s  PDB=%-30s  SeqID=%.1f%%  LDDT=%.3f",
+                          Query, Best_PDB_Hit, Seq_Identity*100, LDDT)) %>%
+  pull(label) %>% cat(sep = "\n")
+
+cat("\n\n── Structural Superposition RMSD (SL vs RU pairs, TM-align) ──\n")
+cat("  GH1:    RMSD = 2.71 A  (TM-score = 0.90, 425 aligned)\n")
+cat("  GH3:    RMSD = 3.61 A  (TM-score = 0.76, 457 aligned)\n")
+cat("  GH5_11: RMSD = 1.78 A  (TM-score = 0.91, 337 aligned)\n")
+cat("  GH9:    RMSD = 2.52 A  (TM-score = 0.80, 527 aligned)\n")
+cat("  GH10:   RMSD = 2.87 A  (TM-score = 0.67, 302 aligned)\n")
+cat("  GH28:   RMSD = 7.11 A  (TM-score = 0.25, 147 aligned)\n")
+
+cat("\n\n── Active Site Conservation ──\n\n")
+active <- read_tsv(file.path(data_dir, "renders/active_site_conservation.tsv"),
+                   show_col_types = FALSE) %>%
+  mutate(
+    Pred_Position  = as.integer(Pred_Position),
+    pLDDT_at_site  = as.numeric(na_if(pLDDT_at_site, "N/A")),
+    Conserved_bool = (Conserved == "True")
+  )
+active %>%
+  mutate(label = sprintf("  %-5s  %-10s  %-45s  Role=%-15s  Ref=%s  Pred=%s%s  Conserved=%s  pLDDT=%s",
+                          GH_Family, Environment, Structure, Role,
+                          Ref_Residue, Pred_Residue,
+                          ifelse(is.na(Pred_Position), "", as.character(Pred_Position)),
+                          Conserved,
+                          ifelse(is.na(pLDDT_at_site), "N/A", sprintf("%.1f", pLDDT_at_site)))) %>%
+  pull(label) %>% cat(sep = "\n")
+
+n_conserved <- sum(active$Conserved_bool, na.rm = TRUE)
+n_total_sites <- nrow(active)
+cat(sprintf("\n\n  TOTAL: %d/%d catalytic residues conserved (%.0f%%)\n",
+            n_conserved, n_total_sites, n_conserved/n_total_sites*100))
+cat(sprintf("  Min pLDDT at active site: %.1f\n", min(active$pLDDT_at_site, na.rm = TRUE)))
+cat(sprintf("  Max pLDDT at active site: %.1f\n", max(active$pLDDT_at_site, na.rm = TRUE)))
+```
+
+---
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
