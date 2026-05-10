@@ -1,7 +1,7 @@
 # CAZyme Fold Architecture Is Conserved Between Disparate Environments Despite Extreme Sequence Divergence
 
-**Published in *mSystems* (2026)**
-DOI: [10.1128/msystems.00485-26](https://doi.org/10.1128/msystems.00485-26)
+**Accepted at *mSystems* (2026)**
+DOI: [10.1128/msystems.00485-26](https://doi.org/10.1128/msystems.00485-26) (in press)
 
 Oliyad Jeilu, Addis Simachew, Erica M. Hartmann, Erik Alexandersson, Eva Johansson
 
@@ -54,7 +54,7 @@ This study compares the carbohydrate-degradation potential of two contrasting ec
 
 ## Main Analysis Pipeline
 
-The complete reproducible analysis is in **`soda_rumen_metagenomics_analysis.Rmd`**, which generates all 7 main figures and Table 1 from the published paper:
+The complete reproducible analysis is in **`soda_rumen_metagenomics_analysis.Rmd`**, which generates all 7 main figures and Table 1 from the manuscript:
 
 | Figure | Description |
 |--------|-------------|
@@ -89,7 +89,7 @@ Downstream statistical analyses and visualizations were conducted in R v4.3.1 us
 
 If you use this code or data, please cite:
 
-> Jeilu O, Simachew A, Hartmann EM, Alexandersson E, Johansson E. CAZyme fold architecture is conserved between disparate environments despite extreme sequence divergence. *mSystems*. 2026. DOI: [10.1128/msystems.00485-26](https://doi.org/10.1128/msystems.00485-26)
+> Jeilu O, Simachew A, Hartmann EM, Alexandersson E, Johansson E. CAZyme fold architecture is conserved between disparate environments despite extreme sequence divergence. *mSystems*. 2026 (in press). DOI: [10.1128/msystems.00485-26](https://doi.org/10.1128/msystems.00485-26)
 
 ---
 
