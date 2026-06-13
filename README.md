@@ -63,7 +63,7 @@ The complete reproducible analysis is in **`soda_rumen_metagenomics_analysis.Rmd
 | Fig 3 | Circular phylogenomic tree of 245 dereplicated MAGs |
 | Fig 4 | Functional pathway prevalence heatmap (29 pathways, 9 categories) |
 | Fig 5 | CAZyme class distribution, per-MAG diversity, sequence identity |
-| Fig 6 | GH family repertoire heatmap (15 GH families across top genera) |
+| Fig 6 | GH family repertoire heatmap (14 GH families across top genera) |
 | Fig 7 | AlphaFold3-predicted structures for 12 CAZymes from 6 GH families |
 
 ---

@@ -1233,7 +1233,7 @@ save_fig(p_fig5_caz, "Fig5_cazyme_diversity", nm_wide, 14)
 ## 4.7 ★ Figure 6: GH Family × Genus Repertoire
 
 ```{r fig6-gh-heatmap-standalone, fig.height=9, fig.width=12.60}
-# GH family × genus heatmap as standalone Figure 6 (15 GH families)
+# GH family × genus heatmap as standalone Figure 6 (14 GH families)
 p_fig6_gh <- wrap_elements(full = grid::grid.grabExpr(
   draw(ht_gh_genus, padding = unit(c(2, 2, 2, 2), "mm"))
 ))
