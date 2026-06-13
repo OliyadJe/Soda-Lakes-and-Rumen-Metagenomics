@@ -2015,13 +2015,7 @@ kable(table1_display, format = "html", escape = FALSE,
   )
 ```
 
-
-
-```
-
-
 ---
-
 
 
 ---
