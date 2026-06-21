@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Figure 7 — Interactive 3D CAZyme structures (demo)</title>
+<!-- 3Dmol.js is loaded from CDN; the PDB coordinates are fetched from RCSB
+     directly by your browser. Requires an internet connection at view time. -->
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<style>
+  :root { --soda:#c0392b; --rumen:#16a085; --ink:#222; --muted:#666; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         color:var(--ink); background:#f4f5f7; }
+  header { padding:14px 18px; background:#fff; border-bottom:1px solid #e2e4e8; }
+  header h1 { font-size:17px; margin:0 0 3px; }
+  header p { font-size:12.5px; color:var(--muted); margin:0; }
+  .wrap { display:flex; gap:14px; padding:14px; flex-wrap:wrap; }
+  .panel { background:#fff; border:1px solid #e2e4e8; border-radius:8px; padding:12px; }
+  .controls { width:300px; }
+  .controls label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  select, button { width:100%; padding:7px 8px; font-size:13px; border:1px solid #cfd3d9;
+                   border-radius:6px; background:#fff; cursor:pointer; }
+  .row { display:flex; gap:8px; }
+  .row button { width:50%; }
+  button:hover { background:#f0f2f5; }
+  .meta { margin-top:12px; font-size:12px; line-height:1.5; }
+  .meta b { color:var(--ink); }
+  .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px;
+           color:#fff; font-weight:600; }
+  .badge.soda { background:var(--soda); }
+  .badge.rumen { background:var(--rumen); }
+  #viewport { position:relative; width:640px; height:560px; max-width:100%;
+              border-radius:8px; overflow:hidden; }
+  .note { font-size:11px; color:var(--muted); padding:0 18px 16px; }
+  a { color:#2563c4; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Figure 7 — Interactive 3D CAZyme structures <span style="color:var(--muted);font-weight:400">(proof-of-concept demo)</span></h1>
+  <p>Soda Lake vs Rumen glycoside hydrolases, shown via their Foldseek best-hit PDB structures. Drag to rotate · scroll to zoom.</p>
+</header>
+
+<div class="wrap">
+  <div class="panel controls">
+    <label for="sel">Structure (GH family × environment)</label>
+    <select id="sel"></select>
+
+    <label>Representation</label>
+    <div class="row">
+      <button onclick="setStyle('cartoon')">Cartoon</button>
+      <button onclick="setStyle('surface')">Surface</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="setColor('spectrum')">Rainbow</button>
+      <button onclick="setColor('ss')">By 2° structure</button>
+    </div>
+    <label style="margin-top:12px">Animation</label>
+    <button onclick="toggleSpin()" id="spinbtn">Start spin</button>
+
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <div class="panel">
+    <div id="viewport"></div>
+  </div>
+</div>
+
+<p class="note">
+  Demo only. These are the experimentally-determined <b>Foldseek best-hit</b> templates from
+  the paper's Section 7, not the AlphaFold3 models themselves (those <code>.cif</code> files were
+  produced on Dardel and aren't in this repo). Structures starting <code>*</code> in the paper were
+  non-CAZyme top hits and are omitted here. Coordinates: <a href="https://www.rcsb.org">RCSB PDB</a>.
+</p>
+
+<script>
+// Paper's curated_meta (soda_rumen_metagenomics_analysis.Rmd, ~line 1916):
+// each predicted CAZyme -> its Foldseek best-hit PDB ID + description.
+const STRUCTURES = [
+  { key:"soda_gh1",   env:"soda",  label:"GH1 · Soda Lake",  pdb:"2J75", desc:"GH1 β-glucosidase (T. maritima)",          org:"Roseinatronobacter (Pseudomonadota)" },
+  { key:"rumen_gh1",  env:"rumen", label:"GH1 · Rumen",      pdb:"4BCE", desc:"GH1 β-glycosidase (P. polymyxa)",          org:"Scatonaster (Bacillota)" },
+  { key:"soda_gh3",   env:"soda",  label:"GH3 · Soda Lake",  pdb:"3SQL", desc:"GH31 glycosidase (Synechococcus sp.)",     org:"Limnospira (Cyanobacteriota)" },
+  { key:"rumen_gh3",  env:"rumen", label:"GH3 · Rumen",      pdb:"5XXN", desc:"GH3 β-glucosidase (Fibrobacter sp.)",      org:"Fibrobacter (Fibrobacterota)" },
+  { key:"soda_gh9",   env:"soda",  label:"GH9 · Soda Lake",  pdb:"3X17", desc:"GH9 endoglucanase (metagenome)",          org:"Limnospira (Cyanobacteriota)" },
+  { key:"rumen_gh9",  env:"rumen", label:"GH9 · Rumen",      pdb:"6DHT", desc:"GH9 endoglucanase (Ruminiclostridium)",    org:"Fibrobacter (Fibrobacterota)" },
+  { key:"soda_gh10",  env:"soda",  label:"GH10 · Soda Lake", pdb:"4K68", desc:"GH10 xylanase (metagenome)",              org:"Aquiflexum (Bacteroidota)" },
+  { key:"rumen_gh10", env:"rumen", label:"GH10 · Rumen",     pdb:"7D88", desc:"GH10 xylanase (Bacillus sp. KW1)",         org:"Fibrobacter (Fibrobacterota)" },
+  { key:"rumen_gh28", env:"rumen", label:"GH28 · Rumen",     pdb:"3JUR", desc:"GH28 exo-polygalacturonase (Bacteroides)", org:"Prevotella (Bacteroidota)" }
+];
+
+let viewer, current = { style:"cartoon", color:"spectrum" }, spinning = false;
+
+function init() {
+  const sel = document.getElementById("sel");
+  STRUCTURES.forEach((s, i) => {
+    const o = document.createElement("option");
+    o.value = i; o.textContent = `${s.label}  —  ${s.pdb}`;
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", () => load(+sel.value));
+
+  viewer = $3Dmol.createViewer("viewport", { backgroundColor:"white" });
+  load(0);
+}
+
+function load(i) {
+  const s = STRUCTURES[i];
+  viewer.clear();
+  document.getElementById("meta").innerHTML =
+    `<span class="badge ${s.env}">${s.env === "soda" ? "Soda Lake" : "Rumen"}</span><br><br>` +
+    `<b>${s.label}</b><br>` +
+    `Source MAG: ${s.org}<br>` +
+    `Foldseek best hit: <b>${s.pdb}</b><br>` +
+    `<span style="color:var(--muted)">${s.desc}</span>`;
+
+  $3Dmol.download("pdb:" + s.pdb, viewer, {}, () => {
+    applyStyle();
+    viewer.zoomTo();
+    viewer.render();
+  });
+}
+
+function applyStyle() {
+  const envColor = ()=> (document.querySelector('#meta .badge')?.classList.contains('soda')) ? "#c0392b" : "#16a085";
+  viewer.setStyle({}, {});
+  if (current.style === "cartoon") {
+    const c = current.color === "ss"
+      ? { cartoon:{ colorscheme:"ssJmol" } }
+      : { cartoon:{ color:"spectrum" } };
+    viewer.setStyle({}, c);
+  } else { // surface
+    viewer.setStyle({}, { cartoon:{ hidden:true } });
+    viewer.removeAllSurfaces();
+    viewer.addSurface($3Dmol.SurfaceType.VDW, { opacity:0.9, color: envColor() });
+  }
+  viewer.render();
+}
+
+function setStyle(s){ current.style = s; applyStyle(); }
+function setColor(c){ current.color = c; if (current.style==="cartoon") applyStyle(); }
+function toggleSpin(){
+  spinning = !spinning;
+  viewer.spin(spinning ? "y" : false);
+  document.getElementById("spinbtn").textContent = spinning ? "Stop spin" : "Start spin";
+}
+
+window.addEventListener("load", init);
+</script>
+</body>
+</html>
