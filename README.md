@@ -74,6 +74,39 @@ Raw sequencing data: NCBI SRA BioProject [PRJNA1273195](https://www.ncbi.nlm.nih
 
 ---
 
+## Optional: Viral Host Prediction with iPHoP
+
+> Note: This is a supplementary reference and was **not** part of the published mSystems analysis. It is provided for anyone extending this work to predict prokaryotic hosts of phage/viral contigs recovered from the same metagenomes.
+
+[iPHoP](https://bitbucket.org/srouxjgi/iphop) (integrated Phage Host Prediction; [Roux et al., 2023, *PLOS Biology*](https://doi.org/10.1371/journal.pbio.3002083)) predicts host genus for phage genomes by integrating multiple host- and phage-based tools. As of July 2026 the code has moved to GitHub; the Bitbucket repo is frozen but the database download (hosted on the NERSC portal) remains active.
+
+- **Tool version:** iPHoP v1.4.2 (Jan 2026)
+- **Default database:** `iPHoP_db_Jun25_rw` (folder `Jun_2025_pub_rw`; requires iPHoP ≥ 1.4.1), built from GTDB r226 plus 2025 IMG and MGnify bins.
+
+Download the database using the built-in utility (recommended — verifies integrity):
+
+```bash
+iphop download --db_dir path_to_iPHoP_db              # downloads the latest database by default
+iphop download --db_dir path_to_iPHoP_db --full_verify # verify integrity after download
+```
+
+Or download and extract manually:
+
+```bash
+wget https://portal.nersc.gov/cfs/m342/iphop/db/iPHoP.latest_rw.tar.gz
+tar -zxvf iPHoP.latest_rw.tar.gz
+```
+
+To check the exact download size before committing to it (the full `_rw` database is large — on the order of tens of GB compressed, and larger once extracted):
+
+```bash
+curl -sIL https://portal.nersc.gov/cfs/m342/iphop/db/iPHoP.latest_rw.tar.gz | grep -i content-length
+```
+
+A small test database (`iPHoP_db_rw_1.4_for-test`) is available for verifying an installation before downloading the full database.
+
+---
+
 ## Analysis Environment
 
 Upstream bioinformatics was performed on Swedish national HPC clusters:
